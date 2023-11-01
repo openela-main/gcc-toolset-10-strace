@@ -1,0 +1,30 @@
+From 05747ff8f8a3533e4db69eb359be9ed1ae920ebd Mon Sep 17 00:00:00 2001
+From: "Dmitry V. Levin" <ldv@altlinux.org>
+Date: Tue, 16 Jun 2020 08:00:00 +0000
+Subject: [PATCH 121/138] types: skip field lines that start with comments
+
+This allows to exclude certain fields from type checks by placing
+comments at the beginning of the corresponding lines.
+
+* types/find_last_type_fields.awk: Skip lines starting with spaces
+followed by "/".
+---
+ types/find_last_type_fields.awk | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/types/find_last_type_fields.awk b/types/find_last_type_fields.awk
+index 4c0da0f..d0cae0d 100644
+--- a/types/find_last_type_fields.awk
++++ b/types/find_last_type_fields.awk
+@@ -17,7 +17,7 @@
+ 		print a[1] "." last_field
+ 		next
+ 	}
+-	if (match($0, /^[[:space:]]+[^];:[]+[[:space:]]+([^][:space:];:[]+)(\[[^];:[]*\])?;.*$/, a)) {
++	if (match($0, /^[[:space:]]+[^];[:space:]:\/[][^];:[]*[[:space:]]+([^][:space:];:[]+)(\[[^];:[]*\])?;.*$/, a)) {
+ 		last_field = a[1]
+ 		next
+ 	}
+-- 
+2.1.4
+

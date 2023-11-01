@@ -1,0 +1,683 @@
+From 24119509205a17c71de10e913cfc38dc52aa6563 Mon Sep 17 00:00:00 2001
+From: "Dmitry V. Levin" <ldv@altlinux.org>
+Date: Sat, 1 Aug 2020 08:00:00 +0000
+Subject: [PATCH 132/138] tests: check decoding of tkill syscall
+
+* tests/tkill.c: New file.
+* tests/gen_tests.in (tkill): New entry.
+* tests/pure_executables.list: Add tkill.
+* tests/.gitignore: Likewise.
+---
+ tests/.gitignore            |  1 +
+ tests/gen_tests.in          |  1 +
+ tests/pure_executables.list |  1 +
+ tests/tkill.c               | 60 +++++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 63 insertions(+)
+ create mode 100644 tests/tkill.c
+
+Index: strace-5.7/tests/gen_tests.in
+===================================================================
+--- strace-5.7.orig/tests/gen_tests.in	2020-09-09 15:47:07.671767616 +0200
++++ strace-5.7/tests/gen_tests.in	2020-09-09 19:30:36.780885588 +0200
+@@ -668,6 +668,7 @@
+ timerfd_xettime	-e trace=timerfd_create,timerfd_settime,timerfd_gettime
+ times	-esignal=none
+ times-fail	-a12 -e trace=times
++tkill	-a12 --signal='!cont'
+ trace_clock	test_trace_expr 'clock_nanosleep|times' -e%clock
+ trace_creds	test_trace_expr '([gs]et[^p]*([gu]id|groups)|caps|prctl|[fl]?chown|print(path-umovestr|strn-umoven)-undumpable|ptrace|quotactl|rt_sigtimedwait|rt_(tg)?sigqueueinfo).*' -e%creds
+ trace_fstat	test_trace_expr '' -e%fstat -v -P stat.sample -P /dev/full
+Index: strace-5.7/tests/pure_executables.list
+===================================================================
+--- strace-5.7.orig/tests/pure_executables.list	2020-09-09 15:47:07.671767616 +0200
++++ strace-5.7/tests/pure_executables.list	2020-09-09 19:30:36.780885588 +0200
+@@ -589,6 +589,7 @@
+ timerfd_xettime
+ times
+ times-fail
++tkill
+ truncate
+ truncate64
+ ugetrlimit
+Index: strace-5.7/tests/tkill.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ strace-5.7/tests/tkill.c	2020-09-09 19:21:10.469548041 +0200
+@@ -0,0 +1,60 @@
++/*
++ * Check decoding of tkill syscall.
++ *
++ * Copyright (c) 2020 Dmitry V. Levin <ldv@altlinux.org>
++ * All rights reserved.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "tests.h"
++#include "scno.h"
++
++#ifdef __NR_tkill
++
++# include <signal.h>
++# include <stdio.h>
++# include <unistd.h>
++
++static const char *errstr;
++
++static long
++k_tkill(const unsigned int tid, const unsigned int sig)
++{
++        const kernel_ulong_t fill = (kernel_ulong_t) 0xdefaced00000000ULL;
++        const kernel_ulong_t bad = (kernel_ulong_t) 0xbadc0dedbadc0dedULL;
++        const kernel_ulong_t arg1 = fill | tid;
++        const kernel_ulong_t arg2 = fill | sig;
++        const long rc = syscall(__NR_tkill, arg1, arg2, bad, bad, bad, bad);
++        errstr = sprintrc(rc);
++        return rc;
++}
++
++int
++main(void)
++{
++	const int pid = getpid();
++	const int bad_pid = -1;
++	const int bad_sig = 0xface;
++
++	k_tkill(pid, 0);
++	printf("tkill(%d, 0) = %s\n", pid, errstr);
++
++	k_tkill(pid, SIGCONT);
++	printf("tkill(%d, SIGCONT) = %s\n", pid, errstr);
++
++	k_tkill(bad_pid, bad_sig);
++	printf("tkill(%d, %d) = %s\n", bad_pid, bad_sig, errstr);
++
++	k_tkill(bad_pid, -bad_sig);
++	printf("tkill(%d, %d) = %s\n", bad_pid, -bad_sig, errstr);
++
++	puts("+++ exited with 0 +++");
++	return 0;
++}
++
++#else
++
++SKIP_MAIN_UNDEFINED("__NR_tkill")
++
++#endif
+Index: strace-5.7/tests-m32/gen_tests.in
+===================================================================
+--- strace-5.7.orig/tests-m32/gen_tests.in	2020-09-09 15:47:07.671767616 +0200
++++ strace-5.7/tests-m32/gen_tests.in	2020-09-09 19:30:36.780885588 +0200
+@@ -668,6 +668,7 @@
+ timerfd_xettime	-e trace=timerfd_create,timerfd_settime,timerfd_gettime
+ times	-esignal=none
+ times-fail	-a12 -e trace=times
++tkill	-a12 --signal='!cont'
+ trace_clock	test_trace_expr 'clock_nanosleep|times' -e%clock
+ trace_creds	test_trace_expr '([gs]et[^p]*([gu]id|groups)|caps|prctl|[fl]?chown|print(path-umovestr|strn-umoven)-undumpable|ptrace|quotactl|rt_sigtimedwait|rt_(tg)?sigqueueinfo).*' -e%creds
+ trace_fstat	test_trace_expr '' -e%fstat -v -P stat.sample -P /dev/full
+Index: strace-5.7/tests-m32/pure_executables.list
+===================================================================
+--- strace-5.7.orig/tests-m32/pure_executables.list	2020-09-09 15:47:07.671767616 +0200
++++ strace-5.7/tests-m32/pure_executables.list	2020-09-09 19:30:36.780885588 +0200
+@@ -589,6 +589,7 @@
+ timerfd_xettime
+ times
+ times-fail
++tkill
+ truncate
+ truncate64
+ ugetrlimit
+Index: strace-5.7/tests-m32/tkill.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ strace-5.7/tests-m32/tkill.c	2020-09-09 19:21:10.469548041 +0200
+@@ -0,0 +1,60 @@
++/*
++ * Check decoding of tkill syscall.
++ *
++ * Copyright (c) 2020 Dmitry V. Levin <ldv@altlinux.org>
++ * All rights reserved.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "tests.h"
++#include "scno.h"
++
++#ifdef __NR_tkill
++
++# include <signal.h>
++# include <stdio.h>
++# include <unistd.h>
++
++static const char *errstr;
++
++static long
++k_tkill(const unsigned int tid, const unsigned int sig)
++{
++        const kernel_ulong_t fill = (kernel_ulong_t) 0xdefaced00000000ULL;
++        const kernel_ulong_t bad = (kernel_ulong_t) 0xbadc0dedbadc0dedULL;
++        const kernel_ulong_t arg1 = fill | tid;
++        const kernel_ulong_t arg2 = fill | sig;
++        const long rc = syscall(__NR_tkill, arg1, arg2, bad, bad, bad, bad);
++        errstr = sprintrc(rc);
++        return rc;
++}
++
++int
++main(void)
++{
++	const int pid = getpid();
++	const int bad_pid = -1;
++	const int bad_sig = 0xface;
++
++	k_tkill(pid, 0);
++	printf("tkill(%d, 0) = %s\n", pid, errstr);
++
++	k_tkill(pid, SIGCONT);
++	printf("tkill(%d, SIGCONT) = %s\n", pid, errstr);
++
++	k_tkill(bad_pid, bad_sig);
++	printf("tkill(%d, %d) = %s\n", bad_pid, bad_sig, errstr);
++
++	k_tkill(bad_pid, -bad_sig);
++	printf("tkill(%d, %d) = %s\n", bad_pid, -bad_sig, errstr);
++
++	puts("+++ exited with 0 +++");
++	return 0;
++}
++
++#else
++
++SKIP_MAIN_UNDEFINED("__NR_tkill")
++
++#endif
+Index: strace-5.7/tests-mx32/gen_tests.in
+===================================================================
+--- strace-5.7.orig/tests-mx32/gen_tests.in	2020-09-09 15:47:07.671767616 +0200
++++ strace-5.7/tests-mx32/gen_tests.in	2020-09-09 19:30:36.780885588 +0200
+@@ -668,6 +668,7 @@
+ timerfd_xettime	-e trace=timerfd_create,timerfd_settime,timerfd_gettime
+ times	-esignal=none
+ times-fail	-a12 -e trace=times
++tkill	-a12 --signal='!cont'
+ trace_clock	test_trace_expr 'clock_nanosleep|times' -e%clock
+ trace_creds	test_trace_expr '([gs]et[^p]*([gu]id|groups)|caps|prctl|[fl]?chown|print(path-umovestr|strn-umoven)-undumpable|ptrace|quotactl|rt_sigtimedwait|rt_(tg)?sigqueueinfo).*' -e%creds
+ trace_fstat	test_trace_expr '' -e%fstat -v -P stat.sample -P /dev/full
+Index: strace-5.7/tests-mx32/pure_executables.list
+===================================================================
+--- strace-5.7.orig/tests-mx32/pure_executables.list	2020-09-09 15:47:07.671767616 +0200
++++ strace-5.7/tests-mx32/pure_executables.list	2020-09-09 19:30:36.780885588 +0200
+@@ -589,6 +589,7 @@
+ timerfd_xettime
+ times
+ times-fail
++tkill
+ truncate
+ truncate64
+ ugetrlimit
+Index: strace-5.7/tests-mx32/tkill.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ strace-5.7/tests-mx32/tkill.c	2020-09-09 19:21:10.469548041 +0200
+@@ -0,0 +1,60 @@
++/*
++ * Check decoding of tkill syscall.
++ *
++ * Copyright (c) 2020 Dmitry V. Levin <ldv@altlinux.org>
++ * All rights reserved.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "tests.h"
++#include "scno.h"
++
++#ifdef __NR_tkill
++
++# include <signal.h>
++# include <stdio.h>
++# include <unistd.h>
++
++static const char *errstr;
++
++static long
++k_tkill(const unsigned int tid, const unsigned int sig)
++{
++        const kernel_ulong_t fill = (kernel_ulong_t) 0xdefaced00000000ULL;
++        const kernel_ulong_t bad = (kernel_ulong_t) 0xbadc0dedbadc0dedULL;
++        const kernel_ulong_t arg1 = fill | tid;
++        const kernel_ulong_t arg2 = fill | sig;
++        const long rc = syscall(__NR_tkill, arg1, arg2, bad, bad, bad, bad);
++        errstr = sprintrc(rc);
++        return rc;
++}
++
++int
++main(void)
++{
++	const int pid = getpid();
++	const int bad_pid = -1;
++	const int bad_sig = 0xface;
++
++	k_tkill(pid, 0);
++	printf("tkill(%d, 0) = %s\n", pid, errstr);
++
++	k_tkill(pid, SIGCONT);
++	printf("tkill(%d, SIGCONT) = %s\n", pid, errstr);
++
++	k_tkill(bad_pid, bad_sig);
++	printf("tkill(%d, %d) = %s\n", bad_pid, bad_sig, errstr);
++
++	k_tkill(bad_pid, -bad_sig);
++	printf("tkill(%d, %d) = %s\n", bad_pid, -bad_sig, errstr);
++
++	puts("+++ exited with 0 +++");
++	return 0;
++}
++
++#else
++
++SKIP_MAIN_UNDEFINED("__NR_tkill")
++
++#endif
+Index: strace-5.7/tests-m32/Makefile.in
+===================================================================
+--- strace-5.7.orig/tests-m32/Makefile.in	2020-09-09 15:47:07.671767616 +0200
++++ strace-5.7/tests-m32/Makefile.in	2020-09-09 19:32:14.800944013 +0200
+@@ -496,14 +496,15 @@
+ 	sysinfo$(EXEEXT) syslog$(EXEEXT) tee$(EXEEXT) time$(EXEEXT) \
+ 	timer_create$(EXEEXT) timer_xettime$(EXEEXT) \
+ 	timerfd_xettime$(EXEEXT) times$(EXEEXT) times-fail$(EXEEXT) \
+-	truncate$(EXEEXT) truncate64$(EXEEXT) ugetrlimit$(EXEEXT) \
+-	uio$(EXEEXT) umask$(EXEEXT) umount$(EXEEXT) umount2$(EXEEXT) \
+-	umoven-illptr$(EXEEXT) umovestr$(EXEEXT) \
+-	umovestr-illptr$(EXEEXT) umovestr2$(EXEEXT) umovestr3$(EXEEXT) \
+-	umovestr_cached$(EXEEXT) umovestr_cached_adjacent$(EXEEXT) \
+-	uname$(EXEEXT) unlink$(EXEEXT) unlinkat$(EXEEXT) \
+-	unshare$(EXEEXT) userfaultfd$(EXEEXT) ustat$(EXEEXT) \
+-	utime$(EXEEXT) utimensat$(EXEEXT) utimensat-Xabbrev$(EXEEXT) \
++	tkill$(EXEEXT) truncate$(EXEEXT) truncate64$(EXEEXT) \
++	ugetrlimit$(EXEEXT) uio$(EXEEXT) umask$(EXEEXT) \
++	umount$(EXEEXT) umount2$(EXEEXT) umoven-illptr$(EXEEXT) \
++	umovestr$(EXEEXT) umovestr-illptr$(EXEEXT) umovestr2$(EXEEXT) \
++	umovestr3$(EXEEXT) umovestr_cached$(EXEEXT) \
++	umovestr_cached_adjacent$(EXEEXT) uname$(EXEEXT) \
++	unlink$(EXEEXT) unlinkat$(EXEEXT) unshare$(EXEEXT) \
++	userfaultfd$(EXEEXT) ustat$(EXEEXT) utime$(EXEEXT) \
++	utimensat$(EXEEXT) utimensat-Xabbrev$(EXEEXT) \
+ 	utimensat-Xraw$(EXEEXT) utimensat-Xverbose$(EXEEXT) \
+ 	utimes$(EXEEXT) vhangup$(EXEEXT) vmsplice$(EXEEXT) \
+ 	wait4$(EXEEXT) waitid$(EXEEXT) waitpid$(EXEEXT) xattr$(EXEEXT) \
+@@ -3484,6 +3485,10 @@
+ times_fail_OBJECTS = times-fail.$(OBJEXT)
+ times_fail_LDADD = $(LDADD)
+ times_fail_DEPENDENCIES = libtests.a
++tkill_SOURCES = tkill.c
++tkill_OBJECTS = tkill.$(OBJEXT)
++tkill_LDADD = $(LDADD)
++tkill_DEPENDENCIES = libtests.a
+ tracer_ppid_pgid_sid_SOURCES = tracer_ppid_pgid_sid.c
+ tracer_ppid_pgid_sid_OBJECTS = tracer_ppid_pgid_sid.$(OBJEXT)
+ tracer_ppid_pgid_sid_LDADD = $(LDADD)
+@@ -4184,7 +4189,7 @@
+ 	./$(DEPDIR)/threads-execve.Po ./$(DEPDIR)/time.Po \
+ 	./$(DEPDIR)/timer_create.Po ./$(DEPDIR)/timer_xettime.Po \
+ 	./$(DEPDIR)/timerfd_xettime.Po ./$(DEPDIR)/times-fail.Po \
+-	./$(DEPDIR)/times.Po ./$(DEPDIR)/tracer_ppid_pgid_sid.Po \
++	./$(DEPDIR)/times.Po ./$(DEPDIR)/tkill.Po ./$(DEPDIR)/tracer_ppid_pgid_sid.Po \
+ 	./$(DEPDIR)/truncate.Po ./$(DEPDIR)/truncate64-truncate64.Po \
+ 	./$(DEPDIR)/ugetrlimit.Po ./$(DEPDIR)/uio-uio.Po \
+ 	./$(DEPDIR)/umask.Po ./$(DEPDIR)/umount.Po \
+@@ -4441,7 +4446,7 @@
+ 	syslog-success.c tee.c threads-execve.c \
+ 	threads-execve--quiet-thread-execve.c threads-execve-q.c \
+ 	threads-execve-qq.c threads-execve-qqq.c time.c timer_create.c \
+-	timer_xettime.c timerfd_xettime.c times.c times-fail.c \
++	timer_xettime.c timerfd_xettime.c times.c times-fail.c tkill.c \
+ 	tracer_ppid_pgid_sid.c truncate.c truncate64.c ugetrlimit.c \
+ 	uio.c umask.c umount.c umount2.c umoven-illptr.c umovestr.c \
+ 	umovestr-illptr.c umovestr2.c umovestr3.c umovestr_cached.c \
+@@ -4667,7 +4672,7 @@
+ 	syslog-success.c tee.c threads-execve.c \
+ 	threads-execve--quiet-thread-execve.c threads-execve-q.c \
+ 	threads-execve-qq.c threads-execve-qqq.c time.c timer_create.c \
+-	timer_xettime.c timerfd_xettime.c times.c times-fail.c \
++	timer_xettime.c timerfd_xettime.c times.c times-fail.c tkill.c \
+ 	tracer_ppid_pgid_sid.c truncate.c truncate64.c ugetrlimit.c \
+ 	uio.c umask.c umount.c umount2.c umoven-illptr.c umovestr.c \
+ 	umovestr-illptr.c umovestr2.c umovestr3.c umovestr_cached.c \
+@@ -5725,6 +5730,7 @@
+   timerfd_xettime \
+   times \
+   times-fail \
++  tkill \
+   truncate \
+   truncate64 \
+   ugetrlimit \
+@@ -6133,9 +6139,10 @@
+ 	threads-execve-qqq.gen.test time.gen.test \
+ 	timer_create.gen.test timer_xettime.gen.test \
+ 	timerfd_xettime.gen.test times.gen.test times-fail.gen.test \
+-	trace_clock.gen.test trace_creds.gen.test trace_fstat.gen.test \
+-	trace_fstatfs.gen.test trace_lstat.gen.test \
+-	trace_personality_32.gen.test trace_personality_64.gen.test \
++	tkill.gen.test trace_clock.gen.test trace_creds.gen.test \
++	trace_fstat.gen.test trace_fstatfs.gen.test \
++	trace_lstat.gen.test trace_personality_32.gen.test \
++	trace_personality_64.gen.test \
+ 	trace_personality_regex_32.gen.test \
+ 	trace_personality_regex_64.gen.test \
+ 	trace_personality_regex_x32.gen.test \
+@@ -9392,6 +9399,10 @@
+ 	@rm -f times-fail$(EXEEXT)
+ 	$(AM_V_CCLD)$(LINK) $(times_fail_OBJECTS) $(times_fail_LDADD) $(LIBS)
+ 
++tkill$(EXEEXT): $(tkill_OBJECTS) $(tkill_DEPENDENCIES) $(EXTRA_tkill_DEPENDENCIES) 
++	@rm -f tkill$(EXEEXT)
++	$(AM_V_CCLD)$(LINK) $(tkill_OBJECTS) $(tkill_LDADD) $(LIBS)
++
+ tracer_ppid_pgid_sid$(EXEEXT): $(tracer_ppid_pgid_sid_OBJECTS) $(tracer_ppid_pgid_sid_DEPENDENCIES) $(EXTRA_tracer_ppid_pgid_sid_DEPENDENCIES) 
+ 	@rm -f tracer_ppid_pgid_sid$(EXEEXT)
+ 	$(AM_V_CCLD)$(LINK) $(tracer_ppid_pgid_sid_OBJECTS) $(tracer_ppid_pgid_sid_LDADD) $(LIBS)
+@@ -10349,6 +10360,7 @@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/timerfd_xettime.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/times-fail.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/times.Po@am__quote@ # am--include-marker
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tkill.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tracer_ppid_pgid_sid.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/truncate.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/truncate64-truncate64.Po@am__quote@ # am--include-marker
+@@ -12169,6 +12181,7 @@
+ 	-rm -f ./$(DEPDIR)/timerfd_xettime.Po
+ 	-rm -f ./$(DEPDIR)/times-fail.Po
+ 	-rm -f ./$(DEPDIR)/times.Po
++	-rm -f ./$(DEPDIR)/tkill.Po
+ 	-rm -f ./$(DEPDIR)/tracer_ppid_pgid_sid.Po
+ 	-rm -f ./$(DEPDIR)/truncate.Po
+ 	-rm -f ./$(DEPDIR)/truncate64-truncate64.Po
+@@ -13024,6 +13037,7 @@
+ 	-rm -f ./$(DEPDIR)/timerfd_xettime.Po
+ 	-rm -f ./$(DEPDIR)/times-fail.Po
+ 	-rm -f ./$(DEPDIR)/times.Po
++	-rm -f ./$(DEPDIR)/tkill.Po
+ 	-rm -f ./$(DEPDIR)/tracer_ppid_pgid_sid.Po
+ 	-rm -f ./$(DEPDIR)/truncate.Po
+ 	-rm -f ./$(DEPDIR)/truncate64-truncate64.Po
+@@ -15101,6 +15115,9 @@
+ $(srcdir)/times-fail.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
+ 	$(AM_V_GEN) $^ $@
+ 
++$(srcdir)/tkill.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
++	$(AM_V_GEN) $^ $@
++
+ $(srcdir)/trace_clock.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
+ 	$(AM_V_GEN) $^ $@
+ 
+Index: strace-5.7/tests-mx32/Makefile.in
+===================================================================
+--- strace-5.7.orig/tests-mx32/Makefile.in	2020-09-09 15:47:07.671767616 +0200
++++ strace-5.7/tests-mx32/Makefile.in	2020-09-09 19:32:39.854958946 +0200
+@@ -496,14 +496,15 @@
+ 	sysinfo$(EXEEXT) syslog$(EXEEXT) tee$(EXEEXT) time$(EXEEXT) \
+ 	timer_create$(EXEEXT) timer_xettime$(EXEEXT) \
+ 	timerfd_xettime$(EXEEXT) times$(EXEEXT) times-fail$(EXEEXT) \
+-	truncate$(EXEEXT) truncate64$(EXEEXT) ugetrlimit$(EXEEXT) \
+-	uio$(EXEEXT) umask$(EXEEXT) umount$(EXEEXT) umount2$(EXEEXT) \
+-	umoven-illptr$(EXEEXT) umovestr$(EXEEXT) \
+-	umovestr-illptr$(EXEEXT) umovestr2$(EXEEXT) umovestr3$(EXEEXT) \
+-	umovestr_cached$(EXEEXT) umovestr_cached_adjacent$(EXEEXT) \
+-	uname$(EXEEXT) unlink$(EXEEXT) unlinkat$(EXEEXT) \
+-	unshare$(EXEEXT) userfaultfd$(EXEEXT) ustat$(EXEEXT) \
+-	utime$(EXEEXT) utimensat$(EXEEXT) utimensat-Xabbrev$(EXEEXT) \
++	tkill$(EXEEXT) truncate$(EXEEXT) truncate64$(EXEEXT) \
++	ugetrlimit$(EXEEXT) uio$(EXEEXT) umask$(EXEEXT) \
++	umount$(EXEEXT) umount2$(EXEEXT) umoven-illptr$(EXEEXT) \
++	umovestr$(EXEEXT) umovestr-illptr$(EXEEXT) umovestr2$(EXEEXT) \
++	umovestr3$(EXEEXT) umovestr_cached$(EXEEXT) \
++	umovestr_cached_adjacent$(EXEEXT) uname$(EXEEXT) \
++	unlink$(EXEEXT) unlinkat$(EXEEXT) unshare$(EXEEXT) \
++	userfaultfd$(EXEEXT) ustat$(EXEEXT) utime$(EXEEXT) \
++	utimensat$(EXEEXT) utimensat-Xabbrev$(EXEEXT) \
+ 	utimensat-Xraw$(EXEEXT) utimensat-Xverbose$(EXEEXT) \
+ 	utimes$(EXEEXT) vhangup$(EXEEXT) vmsplice$(EXEEXT) \
+ 	wait4$(EXEEXT) waitid$(EXEEXT) waitpid$(EXEEXT) xattr$(EXEEXT) \
+@@ -3484,6 +3485,10 @@
+ times_fail_OBJECTS = times-fail.$(OBJEXT)
+ times_fail_LDADD = $(LDADD)
+ times_fail_DEPENDENCIES = libtests.a
++tkill_SOURCES = tkill.c
++tkill_OBJECTS = tkill.$(OBJEXT)
++tkill_LDADD = $(LDADD)
++tkill_DEPENDENCIES = libtests.a
+ tracer_ppid_pgid_sid_SOURCES = tracer_ppid_pgid_sid.c
+ tracer_ppid_pgid_sid_OBJECTS = tracer_ppid_pgid_sid.$(OBJEXT)
+ tracer_ppid_pgid_sid_LDADD = $(LDADD)
+@@ -4184,7 +4189,7 @@
+ 	./$(DEPDIR)/threads-execve.Po ./$(DEPDIR)/time.Po \
+ 	./$(DEPDIR)/timer_create.Po ./$(DEPDIR)/timer_xettime.Po \
+ 	./$(DEPDIR)/timerfd_xettime.Po ./$(DEPDIR)/times-fail.Po \
+-	./$(DEPDIR)/times.Po ./$(DEPDIR)/tracer_ppid_pgid_sid.Po \
++	./$(DEPDIR)/times.Po ./$(DEPDIR)/tkill.Po ./$(DEPDIR)/tracer_ppid_pgid_sid.Po \
+ 	./$(DEPDIR)/truncate.Po ./$(DEPDIR)/truncate64-truncate64.Po \
+ 	./$(DEPDIR)/ugetrlimit.Po ./$(DEPDIR)/uio-uio.Po \
+ 	./$(DEPDIR)/umask.Po ./$(DEPDIR)/umount.Po \
+@@ -4441,7 +4446,7 @@
+ 	syslog-success.c tee.c threads-execve.c \
+ 	threads-execve--quiet-thread-execve.c threads-execve-q.c \
+ 	threads-execve-qq.c threads-execve-qqq.c time.c timer_create.c \
+-	timer_xettime.c timerfd_xettime.c times.c times-fail.c \
++	timer_xettime.c timerfd_xettime.c times.c times-fail.c tkill.c \
+ 	tracer_ppid_pgid_sid.c truncate.c truncate64.c ugetrlimit.c \
+ 	uio.c umask.c umount.c umount2.c umoven-illptr.c umovestr.c \
+ 	umovestr-illptr.c umovestr2.c umovestr3.c umovestr_cached.c \
+@@ -4667,7 +4672,7 @@
+ 	syslog-success.c tee.c threads-execve.c \
+ 	threads-execve--quiet-thread-execve.c threads-execve-q.c \
+ 	threads-execve-qq.c threads-execve-qqq.c time.c timer_create.c \
+-	timer_xettime.c timerfd_xettime.c times.c times-fail.c \
++	timer_xettime.c timerfd_xettime.c times.c times-fail.c tkill.c \
+ 	tracer_ppid_pgid_sid.c truncate.c truncate64.c ugetrlimit.c \
+ 	uio.c umask.c umount.c umount2.c umoven-illptr.c umovestr.c \
+ 	umovestr-illptr.c umovestr2.c umovestr3.c umovestr_cached.c \
+@@ -5725,6 +5730,7 @@
+   timerfd_xettime \
+   times \
+   times-fail \
++  tkill \
+   truncate \
+   truncate64 \
+   ugetrlimit \
+@@ -6133,9 +6139,10 @@
+ 	threads-execve-qqq.gen.test time.gen.test \
+ 	timer_create.gen.test timer_xettime.gen.test \
+ 	timerfd_xettime.gen.test times.gen.test times-fail.gen.test \
+-	trace_clock.gen.test trace_creds.gen.test trace_fstat.gen.test \
+-	trace_fstatfs.gen.test trace_lstat.gen.test \
+-	trace_personality_32.gen.test trace_personality_64.gen.test \
++	tkill.gen.test trace_clock.gen.test trace_creds.gen.test \
++	trace_fstat.gen.test trace_fstatfs.gen.test \
++	trace_lstat.gen.test trace_personality_32.gen.test \
++	trace_personality_64.gen.test \
+ 	trace_personality_regex_32.gen.test \
+ 	trace_personality_regex_64.gen.test \
+ 	trace_personality_regex_x32.gen.test \
+@@ -9392,6 +9399,10 @@
+ 	@rm -f times-fail$(EXEEXT)
+ 	$(AM_V_CCLD)$(LINK) $(times_fail_OBJECTS) $(times_fail_LDADD) $(LIBS)
+ 
++tkill$(EXEEXT): $(tkill_OBJECTS) $(tkill_DEPENDENCIES) $(EXTRA_tkill_DEPENDENCIES) 
++	@rm -f tkill$(EXEEXT)
++	$(AM_V_CCLD)$(LINK) $(tkill_OBJECTS) $(tkill_LDADD) $(LIBS)
++
+ tracer_ppid_pgid_sid$(EXEEXT): $(tracer_ppid_pgid_sid_OBJECTS) $(tracer_ppid_pgid_sid_DEPENDENCIES) $(EXTRA_tracer_ppid_pgid_sid_DEPENDENCIES) 
+ 	@rm -f tracer_ppid_pgid_sid$(EXEEXT)
+ 	$(AM_V_CCLD)$(LINK) $(tracer_ppid_pgid_sid_OBJECTS) $(tracer_ppid_pgid_sid_LDADD) $(LIBS)
+@@ -10349,6 +10360,7 @@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/timerfd_xettime.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/times-fail.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/times.Po@am__quote@ # am--include-marker
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tkill.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tracer_ppid_pgid_sid.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/truncate.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/truncate64-truncate64.Po@am__quote@ # am--include-marker
+@@ -12169,6 +12181,7 @@
+ 	-rm -f ./$(DEPDIR)/timerfd_xettime.Po
+ 	-rm -f ./$(DEPDIR)/times-fail.Po
+ 	-rm -f ./$(DEPDIR)/times.Po
++	-rm -f ./$(DEPDIR)/tkill.Po
+ 	-rm -f ./$(DEPDIR)/tracer_ppid_pgid_sid.Po
+ 	-rm -f ./$(DEPDIR)/truncate.Po
+ 	-rm -f ./$(DEPDIR)/truncate64-truncate64.Po
+@@ -13024,6 +13037,7 @@
+ 	-rm -f ./$(DEPDIR)/timerfd_xettime.Po
+ 	-rm -f ./$(DEPDIR)/times-fail.Po
+ 	-rm -f ./$(DEPDIR)/times.Po
++	-rm -f ./$(DEPDIR)/tkill.Po
+ 	-rm -f ./$(DEPDIR)/tracer_ppid_pgid_sid.Po
+ 	-rm -f ./$(DEPDIR)/truncate.Po
+ 	-rm -f ./$(DEPDIR)/truncate64-truncate64.Po
+@@ -15101,6 +15115,9 @@
+ $(srcdir)/times-fail.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
+ 	$(AM_V_GEN) $^ $@
+ 
++$(srcdir)/tkill.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
++	$(AM_V_GEN) $^ $@
++
+ $(srcdir)/trace_clock.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
+ 	$(AM_V_GEN) $^ $@
+ 
+Index: strace-5.7/tests/Makefile.in
+===================================================================
+--- strace-5.7.orig/tests/Makefile.in	2020-09-09 15:47:07.671767616 +0200
++++ strace-5.7/tests/Makefile.in	2020-09-09 19:30:36.780885588 +0200
+@@ -496,14 +496,15 @@
+ 	sysinfo$(EXEEXT) syslog$(EXEEXT) tee$(EXEEXT) time$(EXEEXT) \
+ 	timer_create$(EXEEXT) timer_xettime$(EXEEXT) \
+ 	timerfd_xettime$(EXEEXT) times$(EXEEXT) times-fail$(EXEEXT) \
+-	truncate$(EXEEXT) truncate64$(EXEEXT) ugetrlimit$(EXEEXT) \
+-	uio$(EXEEXT) umask$(EXEEXT) umount$(EXEEXT) umount2$(EXEEXT) \
+-	umoven-illptr$(EXEEXT) umovestr$(EXEEXT) \
+-	umovestr-illptr$(EXEEXT) umovestr2$(EXEEXT) umovestr3$(EXEEXT) \
+-	umovestr_cached$(EXEEXT) umovestr_cached_adjacent$(EXEEXT) \
+-	uname$(EXEEXT) unlink$(EXEEXT) unlinkat$(EXEEXT) \
+-	unshare$(EXEEXT) userfaultfd$(EXEEXT) ustat$(EXEEXT) \
+-	utime$(EXEEXT) utimensat$(EXEEXT) utimensat-Xabbrev$(EXEEXT) \
++	tkill$(EXEEXT) truncate$(EXEEXT) truncate64$(EXEEXT) \
++	ugetrlimit$(EXEEXT) uio$(EXEEXT) umask$(EXEEXT) \
++	umount$(EXEEXT) umount2$(EXEEXT) umoven-illptr$(EXEEXT) \
++	umovestr$(EXEEXT) umovestr-illptr$(EXEEXT) umovestr2$(EXEEXT) \
++	umovestr3$(EXEEXT) umovestr_cached$(EXEEXT) \
++	umovestr_cached_adjacent$(EXEEXT) uname$(EXEEXT) \
++	unlink$(EXEEXT) unlinkat$(EXEEXT) unshare$(EXEEXT) \
++	userfaultfd$(EXEEXT) ustat$(EXEEXT) utime$(EXEEXT) \
++	utimensat$(EXEEXT) utimensat-Xabbrev$(EXEEXT) \
+ 	utimensat-Xraw$(EXEEXT) utimensat-Xverbose$(EXEEXT) \
+ 	utimes$(EXEEXT) vhangup$(EXEEXT) vmsplice$(EXEEXT) \
+ 	wait4$(EXEEXT) waitid$(EXEEXT) waitpid$(EXEEXT) xattr$(EXEEXT) \
+@@ -3484,6 +3485,10 @@
+ times_fail_OBJECTS = times-fail.$(OBJEXT)
+ times_fail_LDADD = $(LDADD)
+ times_fail_DEPENDENCIES = libtests.a
++tkill_SOURCES = tkill.c
++tkill_OBJECTS = tkill.$(OBJEXT)
++tkill_LDADD = $(LDADD)
++tkill_DEPENDENCIES = libtests.a
+ tracer_ppid_pgid_sid_SOURCES = tracer_ppid_pgid_sid.c
+ tracer_ppid_pgid_sid_OBJECTS = tracer_ppid_pgid_sid.$(OBJEXT)
+ tracer_ppid_pgid_sid_LDADD = $(LDADD)
+@@ -4184,7 +4189,7 @@
+ 	./$(DEPDIR)/threads-execve.Po ./$(DEPDIR)/time.Po \
+ 	./$(DEPDIR)/timer_create.Po ./$(DEPDIR)/timer_xettime.Po \
+ 	./$(DEPDIR)/timerfd_xettime.Po ./$(DEPDIR)/times-fail.Po \
+-	./$(DEPDIR)/times.Po ./$(DEPDIR)/tracer_ppid_pgid_sid.Po \
++	./$(DEPDIR)/times.Po ./$(DEPDIR)/tkill.Po ./$(DEPDIR)/tracer_ppid_pgid_sid.Po \
+ 	./$(DEPDIR)/truncate.Po ./$(DEPDIR)/truncate64-truncate64.Po \
+ 	./$(DEPDIR)/ugetrlimit.Po ./$(DEPDIR)/uio-uio.Po \
+ 	./$(DEPDIR)/umask.Po ./$(DEPDIR)/umount.Po \
+@@ -4441,7 +4446,7 @@
+ 	syslog-success.c tee.c threads-execve.c \
+ 	threads-execve--quiet-thread-execve.c threads-execve-q.c \
+ 	threads-execve-qq.c threads-execve-qqq.c time.c timer_create.c \
+-	timer_xettime.c timerfd_xettime.c times.c times-fail.c \
++	timer_xettime.c timerfd_xettime.c times.c times-fail.c tkill.c \
+ 	tracer_ppid_pgid_sid.c truncate.c truncate64.c ugetrlimit.c \
+ 	uio.c umask.c umount.c umount2.c umoven-illptr.c umovestr.c \
+ 	umovestr-illptr.c umovestr2.c umovestr3.c umovestr_cached.c \
+@@ -4667,7 +4672,7 @@
+ 	syslog-success.c tee.c threads-execve.c \
+ 	threads-execve--quiet-thread-execve.c threads-execve-q.c \
+ 	threads-execve-qq.c threads-execve-qqq.c time.c timer_create.c \
+-	timer_xettime.c timerfd_xettime.c times.c times-fail.c \
++	timer_xettime.c timerfd_xettime.c times.c times-fail.c tkill.c \
+ 	tracer_ppid_pgid_sid.c truncate.c truncate64.c ugetrlimit.c \
+ 	uio.c umask.c umount.c umount2.c umoven-illptr.c umovestr.c \
+ 	umovestr-illptr.c umovestr2.c umovestr3.c umovestr_cached.c \
+@@ -5725,6 +5730,7 @@
+   timerfd_xettime \
+   times \
+   times-fail \
++  tkill \
+   truncate \
+   truncate64 \
+   ugetrlimit \
+@@ -6133,9 +6139,10 @@
+ 	threads-execve-qqq.gen.test time.gen.test \
+ 	timer_create.gen.test timer_xettime.gen.test \
+ 	timerfd_xettime.gen.test times.gen.test times-fail.gen.test \
+-	trace_clock.gen.test trace_creds.gen.test trace_fstat.gen.test \
+-	trace_fstatfs.gen.test trace_lstat.gen.test \
+-	trace_personality_32.gen.test trace_personality_64.gen.test \
++	tkill.gen.test trace_clock.gen.test trace_creds.gen.test \
++	trace_fstat.gen.test trace_fstatfs.gen.test \
++	trace_lstat.gen.test trace_personality_32.gen.test \
++	trace_personality_64.gen.test \
+ 	trace_personality_regex_32.gen.test \
+ 	trace_personality_regex_64.gen.test \
+ 	trace_personality_regex_x32.gen.test \
+@@ -9392,6 +9399,10 @@
+ 	@rm -f times-fail$(EXEEXT)
+ 	$(AM_V_CCLD)$(LINK) $(times_fail_OBJECTS) $(times_fail_LDADD) $(LIBS)
+ 
++tkill$(EXEEXT): $(tkill_OBJECTS) $(tkill_DEPENDENCIES) $(EXTRA_tkill_DEPENDENCIES) 
++	@rm -f tkill$(EXEEXT)
++	$(AM_V_CCLD)$(LINK) $(tkill_OBJECTS) $(tkill_LDADD) $(LIBS)
++
+ tracer_ppid_pgid_sid$(EXEEXT): $(tracer_ppid_pgid_sid_OBJECTS) $(tracer_ppid_pgid_sid_DEPENDENCIES) $(EXTRA_tracer_ppid_pgid_sid_DEPENDENCIES) 
+ 	@rm -f tracer_ppid_pgid_sid$(EXEEXT)
+ 	$(AM_V_CCLD)$(LINK) $(tracer_ppid_pgid_sid_OBJECTS) $(tracer_ppid_pgid_sid_LDADD) $(LIBS)
+@@ -10349,6 +10360,7 @@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/timerfd_xettime.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/times-fail.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/times.Po@am__quote@ # am--include-marker
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tkill.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tracer_ppid_pgid_sid.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/truncate.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/truncate64-truncate64.Po@am__quote@ # am--include-marker
+@@ -12169,6 +12181,7 @@
+ 	-rm -f ./$(DEPDIR)/timerfd_xettime.Po
+ 	-rm -f ./$(DEPDIR)/times-fail.Po
+ 	-rm -f ./$(DEPDIR)/times.Po
++	-rm -f ./$(DEPDIR)/tkill.Po
+ 	-rm -f ./$(DEPDIR)/tracer_ppid_pgid_sid.Po
+ 	-rm -f ./$(DEPDIR)/truncate.Po
+ 	-rm -f ./$(DEPDIR)/truncate64-truncate64.Po
+@@ -13024,6 +13037,7 @@
+ 	-rm -f ./$(DEPDIR)/timerfd_xettime.Po
+ 	-rm -f ./$(DEPDIR)/times-fail.Po
+ 	-rm -f ./$(DEPDIR)/times.Po
++	-rm -f ./$(DEPDIR)/tkill.Po
+ 	-rm -f ./$(DEPDIR)/tracer_ppid_pgid_sid.Po
+ 	-rm -f ./$(DEPDIR)/truncate.Po
+ 	-rm -f ./$(DEPDIR)/truncate64-truncate64.Po
+@@ -15101,6 +15115,9 @@
+ $(srcdir)/times-fail.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
+ 	$(AM_V_GEN) $^ $@
+ 
++$(srcdir)/tkill.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
++	$(AM_V_GEN) $^ $@
++
+ $(srcdir)/trace_clock.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
+ 	$(AM_V_GEN) $^ $@
+ 

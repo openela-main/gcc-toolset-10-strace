@@ -1,0 +1,56 @@
+From 924f71a4296be54e109784dfdb487b732bfc9bbf Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=81kos=20Uzonyi?= <uzonyi.akos@gmail.com>
+Date: Fri, 17 Jul 2020 23:24:36 +0200
+Subject: [PATCH 128/138] Remove tcb parameter of read_int_from_file
+
+* defs.h (read_int_from_file): Remove tcb parameter.
+* util.c (read_int_from_file): Likewise.
+* msghdr.c (get_optmem_max): Remove tcb parameter of read_int_from_file.
+---
+ defs.h   | 2 +-
+ msghdr.c | 2 +-
+ util.c   | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/defs.h b/defs.h
+index d8bd513..dae1cd9 100644
+--- a/defs.h
++++ b/defs.h
+@@ -498,7 +498,7 @@ extern unsigned os_release;
+ # undef KERNEL_VERSION
+ # define KERNEL_VERSION(a, b, c) (((a) << 16) + ((b) << 8) + (c))
+ 
+-extern int read_int_from_file(struct tcb *, const char *, int *);
++extern int read_int_from_file(const char *, int *);
+ 
+ extern void set_sortby(const char *);
+ extern int set_overhead(const char *);
+diff --git a/msghdr.c b/msghdr.c
+index becbb51..1ab4c6e 100644
+--- a/msghdr.c
++++ b/msghdr.c
+@@ -293,7 +293,7 @@ get_optmem_max(struct tcb *tcp)
+ 	static int optmem_max;
+ 
+ 	if (!optmem_max) {
+-		if (read_int_from_file(tcp, "/proc/sys/net/core/optmem_max",
++		if (read_int_from_file("/proc/sys/net/core/optmem_max",
+ 				       &optmem_max) || optmem_max <= 0) {
+ 			optmem_max = sizeof(long long) * (2 * IOV_MAX + 512);
+ 		} else {
+diff --git a/util.c b/util.c
+index cde76c1..286c690 100644
+--- a/util.c
++++ b/util.c
+@@ -1517,7 +1517,7 @@ print_abnormal_hi(const kernel_ulong_t val)
+ }
+ 
+ int
+-read_int_from_file(struct tcb *tcp, const char *const fname, int *const pvalue)
++read_int_from_file(const char *const fname, int *const pvalue)
+ {
+ 	const int fd = open_file(fname, O_RDONLY);
+ 	if (fd < 0)
+-- 
+2.1.4
+

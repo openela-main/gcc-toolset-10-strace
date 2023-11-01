@@ -1,0 +1,417 @@
+From 09ca090db1a67eaf590372ae85a94ba8b41223c2 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=81kos=20Uzonyi?= <uzonyi.akos@gmail.com>
+Date: Mon, 27 Jul 2020 20:54:06 +0200
+Subject: [PATCH 129/138] Add "struct tcb *" parameters to various functions
+
+This is going to be needed to implement pidns support.
+
+* defs.h (print_sockaddr): Add a "struct tcb *" parameter.
+* printsiginfo.h (printsiginfo): Likewise.
+* fcntl.c (print_struct_flock64): Likewise.  All callers updated.
+* print_fields.h (PRINT_FIELD_SOCKADDR): Likewise.   All callers updated.
+* printsiginfo.c (printsigsource, print_si_info, printsiginfo): Likewise.
+All callers updated.
+* sockaddr.c (print_sockaddr_data_un, print_sockaddr_data_in,
+print_sockaddr_data_in6, print_sockaddr_data_ax25,
+print_sockaddr_data_ipx, print_sockaddr_data_x25,
+print_sockaddr_data_nl, print_sockaddr_data_ll,
+print_sockaddr_data_bt, sockaddr_printer, print_sockaddr): Likewise.
+All callers updated.
+---
+ defs.h            |  2 +-
+ fcntl.c           |  6 +++---
+ msghdr.c          |  4 ++--
+ print_fields.h    |  4 ++--
+ print_group_req.c |  2 +-
+ printsiginfo.c    | 22 +++++++++++-----------
+ printsiginfo.h    |  2 +-
+ sock.c            | 10 +++++-----
+ sockaddr.c        | 33 ++++++++++++++++++++-------------
+ strace.c          |  2 +-
+ 10 files changed, 47 insertions(+), 40 deletions(-)
+
+diff --git a/defs.h b/defs.h
+index dae1cd9..48987f9 100644
+--- a/defs.h
++++ b/defs.h
+@@ -1059,7 +1059,7 @@ printfd(struct tcb *tcp, int fd)
+  * of the tracee the descriptor tcp).  This is a stub.
+  */
+ extern void printfd_pid_tracee_ns(struct tcb *tcp, pid_t pid, int fd);
+-extern void print_sockaddr(const void *sa, int len);
++extern void print_sockaddr(struct tcb *, const void *sa, int len);
+ extern bool
+ print_inet_addr(int af, const void *addr, unsigned int len, const char *var_name);
+ extern bool
+diff --git a/fcntl.c b/fcntl.c
+index e84549e..345634c 100644
+--- a/fcntl.c
++++ b/fcntl.c
+@@ -21,7 +21,7 @@
+ #include "xlat/notifyflags.h"
+ 
+ static void
+-print_struct_flock64(const struct_kernel_flock64 *fl, const int getlk)
++print_struct_flock64(struct tcb *const tcp, const struct_kernel_flock64 *fl, const int getlk)
+ {
+ 	PRINT_FIELD_XVAL("{", *fl, l_type, lockfcmds, "F_???");
+ 	PRINT_FIELD_XVAL(", ", *fl, l_whence, whence_codes, "SEEK_???");
+@@ -38,7 +38,7 @@ printflock64(struct tcb *const tcp, const kernel_ulong_t addr, const int getlk)
+ 	struct_kernel_flock64 fl;
+ 
+ 	if (fetch_struct_flock64(tcp, addr, &fl))
+-		print_struct_flock64(&fl, getlk);
++		print_struct_flock64(tcp, &fl, getlk);
+ }
+ 
+ static void
+@@ -47,7 +47,7 @@ printflock(struct tcb *const tcp, const kernel_ulong_t addr, const int getlk)
+ 	struct_kernel_flock64 fl;
+ 
+ 	if (fetch_struct_flock(tcp, addr, &fl))
+-		print_struct_flock64(&fl, getlk);
++		print_struct_flock64(tcp, &fl, getlk);
+ }
+ 
+ static void
+diff --git a/msghdr.c b/msghdr.c
+index 1ab4c6e..ef6dc24 100644
+--- a/msghdr.c
++++ b/msghdr.c
+@@ -216,7 +216,7 @@ print_cmsg_ip_recverr(struct tcb *tcp, const void *cmsg_data,
+ 	PRINT_FIELD_U(", ", *err, ee_code);
+ 	PRINT_FIELD_U(", ", *err, ee_info);
+ 	PRINT_FIELD_U(", ", *err, ee_data);
+-	PRINT_FIELD_SOCKADDR(", ", *err, offender);
++	PRINT_FIELD_SOCKADDR(", ", *err, offender, tcp);
+ 	tprints("}");
+ }
+ 
+@@ -228,7 +228,7 @@ print_cmsg_ip_origdstaddr(struct tcb *tcp, const void *cmsg_data,
+ 		data_len > sizeof(struct sockaddr_storage)
+ 		? sizeof(struct sockaddr_storage) : data_len;
+ 
+-	print_sockaddr(cmsg_data, addr_len);
++	print_sockaddr(tcp, cmsg_data, addr_len);
+ }
+ 
+ typedef void (* const cmsg_printer)(struct tcb *, const void *, unsigned int);
+diff --git a/print_fields.h b/print_fields.h
+index 70dbbff..2413398 100644
+--- a/print_fields.h
++++ b/print_fields.h
+@@ -211,10 +211,10 @@
+ 		print_ifindex((where_).field_);				\
+ 	} while (0)
+ 
+-# define PRINT_FIELD_SOCKADDR(prefix_, where_, field_)			\
++# define PRINT_FIELD_SOCKADDR(prefix_, where_, field_, tcp_)			\
+ 	do {								\
+ 		STRACE_PRINTF("%s%s=", (prefix_), #field_);		\
+-		print_sockaddr(&(where_).field_,			\
++		print_sockaddr(tcp_, &(where_).field_,			\
+ 			       sizeof((where_).field_));		\
+ 	} while (0)
+ 
+diff --git a/print_group_req.c b/print_group_req.c
+index f0ce58b..9e8ce60 100644
+--- a/print_group_req.c
++++ b/print_group_req.c
+@@ -30,7 +30,7 @@ MPERS_PRINTER_DECL(void, print_group_req, struct tcb *const tcp,
+ 		printaddr(addr);
+ 	} else if (!umove_or_printaddr(tcp, addr, &greq)) {
+ 		PRINT_FIELD_IFINDEX("{", greq, gr_interface);
+-		PRINT_FIELD_SOCKADDR(", ", greq, gr_group);
++		PRINT_FIELD_SOCKADDR(", ", greq, gr_group, tcp);
+ 		tprints("}");
+ 	}
+ }
+diff --git a/printsiginfo.c b/printsiginfo.c
+index 0a9932d..8ed1e7b 100644
+--- a/printsiginfo.c
++++ b/printsiginfo.c
+@@ -56,7 +56,7 @@
+ #endif
+ 
+ static void
+-printsigsource(const siginfo_t *sip)
++printsigsource(struct tcb *tcp, const siginfo_t *sip)
+ {
+ 	PRINT_FIELD_D(", ", *sip, si_pid);
+ 	PRINT_FIELD_UID(", ", *sip, si_uid);
+@@ -116,7 +116,7 @@ print_si_code(int si_signo, unsigned int si_code)
+ }
+ 
+ static void
+-print_si_info(const siginfo_t *sip)
++print_si_info(struct tcb *tcp, const siginfo_t *sip)
+ {
+ 	if (sip->si_errno)
+ 		PRINT_FIELD_ERR_U(", ", *sip, si_errno);
+@@ -124,10 +124,10 @@ print_si_info(const siginfo_t *sip)
+ 	if (SI_FROMUSER(sip)) {
+ 		switch (sip->si_code) {
+ 		case SI_USER:
+-			printsigsource(sip);
++			printsigsource(tcp, sip);
+ 			break;
+ 		case SI_TKILL:
+-			printsigsource(sip);
++			printsigsource(tcp, sip);
+ 			break;
+ #if defined HAVE_SIGINFO_T_SI_TIMERID && defined HAVE_SIGINFO_T_SI_OVERRUN
+ 		case SI_TIMER:
+@@ -137,7 +137,7 @@ print_si_info(const siginfo_t *sip)
+ 			break;
+ #endif
+ 		default:
+-			printsigsource(sip);
++			printsigsource(tcp, sip);
+ 			if (sip->si_ptr)
+ 				printsigval(sip);
+ 			break;
+@@ -145,7 +145,7 @@ print_si_info(const siginfo_t *sip)
+ 	} else {
+ 		switch (sip->si_signo) {
+ 		case SIGCHLD:
+-			printsigsource(sip);
++			printsigsource(tcp, sip);
+ 			tprints(", si_status=");
+ 			if (sip->si_code == CLD_EXITED)
+ 				tprintf("%d", sip->si_status);
+@@ -204,7 +204,7 @@ print_si_info(const siginfo_t *sip)
+ #endif
+ 		default:
+ 			if (sip->si_pid || sip->si_uid)
+-				printsigsource(sip);
++				printsigsource(tcp, sip);
+ 			if (sip->si_ptr)
+ 				printsigval(sip);
+ 		}
+@@ -215,7 +215,7 @@ print_si_info(const siginfo_t *sip)
+ static
+ #endif
+ void
+-printsiginfo(const siginfo_t *sip)
++printsiginfo(struct tcb *tcp, const siginfo_t *sip)
+ {
+ 	if (sip->si_signo == 0) {
+ 		tprints("{}");
+@@ -230,7 +230,7 @@ printsiginfo(const siginfo_t *sip)
+ #ifdef SI_NOINFO
+ 	if (sip->si_code != SI_NOINFO)
+ #endif
+-		print_si_info(sip);
++		print_si_info(tcp, sip);
+ 
+ 	tprints("}");
+ }
+@@ -241,13 +241,13 @@ MPERS_PRINTER_DECL(void, printsiginfo_at,
+ 	siginfo_t si;
+ 
+ 	if (!umove_or_printaddr(tcp, addr, &si))
+-		printsiginfo(&si);
++		printsiginfo(tcp, &si);
+ }
+ 
+ static bool
+ print_siginfo_t(struct tcb *tcp, void *elem_buf, size_t elem_size, void *data)
+ {
+-	printsiginfo((const siginfo_t *) elem_buf);
++	printsiginfo(tcp, (const siginfo_t *) elem_buf);
+ 	return true;
+ }
+ 
+diff --git a/printsiginfo.h b/printsiginfo.h
+index 4088cb5..3fec2ab 100644
+--- a/printsiginfo.h
++++ b/printsiginfo.h
+@@ -8,6 +8,6 @@
+ #ifndef STRACE_PRINTSIGINFO_H
+ # define STRACE_PRINTSIGINFO_H
+ 
+-extern void printsiginfo(const siginfo_t *);
++extern void printsiginfo(struct tcb *, const siginfo_t *);
+ 
+ #endif /* !STRACE_PRINTSIGINFO_H */
+diff --git a/sock.c b/sock.c
+index 5b14007..99a3190 100644
+--- a/sock.c
++++ b/sock.c
+@@ -44,19 +44,19 @@ print_ifreq(struct tcb *const tcp, const unsigned int code,
+ 	switch (code) {
+ 	case SIOCSIFADDR:
+ 	case SIOCGIFADDR:
+-		PRINT_FIELD_SOCKADDR("", *ifr, ifr_addr);
++		PRINT_FIELD_SOCKADDR("", *ifr, ifr_addr, tcp);
+ 		break;
+ 	case SIOCSIFDSTADDR:
+ 	case SIOCGIFDSTADDR:
+-		PRINT_FIELD_SOCKADDR("", *ifr, ifr_dstaddr);
++		PRINT_FIELD_SOCKADDR("", *ifr, ifr_dstaddr, tcp);
+ 		break;
+ 	case SIOCSIFBRDADDR:
+ 	case SIOCGIFBRDADDR:
+-		PRINT_FIELD_SOCKADDR("", *ifr, ifr_broadaddr);
++		PRINT_FIELD_SOCKADDR("", *ifr, ifr_broadaddr, tcp);
+ 		break;
+ 	case SIOCSIFNETMASK:
+ 	case SIOCGIFNETMASK:
+-		PRINT_FIELD_SOCKADDR("", *ifr, ifr_netmask);
++		PRINT_FIELD_SOCKADDR("", *ifr, ifr_netmask, tcp);
+ 		break;
+ 	case SIOCSIFHWADDR:
+ 	case SIOCGIFHWADDR: {
+@@ -126,7 +126,7 @@ print_ifconf_ifreq(struct tcb *tcp, void *elem_buf, size_t elem_size,
+ 
+ 	tprints("{ifr_name=");
+ 	print_ifname(ifr->ifr_name);
+-	PRINT_FIELD_SOCKADDR(", ", *ifr, ifr_addr);
++	PRINT_FIELD_SOCKADDR(", ", *ifr, ifr_addr, tcp);
+ 	tprints("}");
+ 
+ 	return true;
+diff --git a/sockaddr.c b/sockaddr.c
+index b6b9aa7..b004633 100644
+--- a/sockaddr.c
++++ b/sockaddr.c
+@@ -47,7 +47,7 @@ const size_t arp_hardware_types_size = ARRAY_SIZE(arp_hardware_types) - 1;
+ const size_t ethernet_protocols_size = ARRAY_SIZE(ethernet_protocols) - 1;
+ 
+ static void
+-print_sockaddr_data_un(const void *const buf, const int addrlen)
++print_sockaddr_data_un(struct tcb *tcp, const void *const buf, const int addrlen)
+ {
+ 	const struct sockaddr_un *const sa_un = buf;
+ 	const int un_len = addrlen > (int) sizeof(*sa_un)
+@@ -172,7 +172,8 @@ decode_inet_addr(struct tcb *const tcp,
+ }
+ 
+ static void
+-print_sockaddr_data_in(const void *const buf, const int addrlen)
++print_sockaddr_data_in(struct tcb *tcp, const void *const buf,
++		       const int addrlen)
+ {
+ 	const struct sockaddr_in *const sa_in = buf;
+ 
+@@ -183,7 +184,8 @@ print_sockaddr_data_in(const void *const buf, const int addrlen)
+ #define SIN6_MIN_LEN offsetof(struct sockaddr_in6, sin6_scope_id)
+ 
+ static void
+-print_sockaddr_data_in6(const void *const buf, const int addrlen)
++print_sockaddr_data_in6(struct tcb *tcp, const void *const buf,
++			const int addrlen)
+ {
+ 	const struct sockaddr_in6 *const sa_in6 = buf;
+ 
+@@ -322,7 +324,8 @@ print_ax25_addr(const void /* ax25_address */ *addr_void)
+ }
+ 
+ static void
+-print_sockaddr_data_ax25(const void *const buf, const int addrlen)
++print_sockaddr_data_ax25(struct tcb *tcp, const void *const buf,
++			 const int addrlen)
+ {
+ 	const struct full_sockaddr_ax25 *const sax25 = buf;
+ 	size_t addrlen_us = MAX(addrlen, 0);
+@@ -372,7 +375,8 @@ digis_end:
+ }
+ 
+ static void
+-print_sockaddr_data_ipx(const void *const buf, const int addrlen)
++print_sockaddr_data_ipx(struct tcb *tcp, const void *const buf,
++			const int addrlen)
+ {
+ 	const struct sockaddr_ipx *const sa_ipx = buf;
+ 	unsigned int i;
+@@ -399,7 +403,8 @@ print_x25_addr(const void /* struct x25_address */ *addr_void)
+ }
+ 
+ static void
+-print_sockaddr_data_x25(const void *const buf, const int addrlen)
++print_sockaddr_data_x25(struct tcb *tcp, const void *const buf,
++			const int addrlen)
+ {
+ 	const struct sockaddr_x25 *const sa_x25 = buf;
+ 
+@@ -407,7 +412,7 @@ print_sockaddr_data_x25(const void *const buf, const int addrlen)
+ }
+ 
+ static void
+-print_sockaddr_data_nl(const void *const buf, const int addrlen)
++print_sockaddr_data_nl(struct tcb *tcp, const void *const buf, const int addrlen)
+ {
+ 	const struct sockaddr_nl *const sa_nl = buf;
+ 
+@@ -442,7 +447,8 @@ print_sll_protocol(const struct sockaddr_ll *const sa_ll)
+ }
+ 
+ static void
+-print_sockaddr_data_ll(const void *const buf, const int addrlen)
++print_sockaddr_data_ll(struct tcb *tcp, const void *const buf,
++		       const int addrlen)
+ {
+ 	const struct sockaddr_ll *const sa_ll = buf;
+ 
+@@ -567,7 +573,8 @@ print_bluetooth_l2_cid_end:
+ }
+ 
+ static void
+-print_sockaddr_data_bt(const void *const buf, const int addrlen)
++print_sockaddr_data_bt(struct tcb *tcp, const void *const buf,
++		       const int addrlen)
+ {
+ 	struct sockaddr_hci {
+ 		/* sa_family_t */ uint16_t	hci_family;
+@@ -651,7 +658,7 @@ print_sockaddr_data_bt(const void *const buf, const int addrlen)
+ 	}
+ }
+ 
+-typedef void (* const sockaddr_printer)(const void *const, const int);
++typedef void (* const sockaddr_printer)(struct tcb *tcp, const void *const, const int);
+ 
+ static const struct {
+ 	const sockaddr_printer printer;
+@@ -669,7 +676,7 @@ static const struct {
+ };
+ 
+ void
+-print_sockaddr(const void *const buf, const int addrlen)
++print_sockaddr(struct tcb *tcp, const void *const buf, const int addrlen)
+ {
+ 	const struct sockaddr *const sa = buf;
+ 
+@@ -682,7 +689,7 @@ print_sockaddr(const void *const buf, const int addrlen)
+ 		if (sa->sa_family < ARRAY_SIZE(sa_printers)
+ 		    && sa_printers[sa->sa_family].printer
+ 		    && addrlen >= sa_printers[sa->sa_family].min_len) {
+-			sa_printers[sa->sa_family].printer(buf, addrlen);
++			sa_printers[sa->sa_family].printer(tcp, buf, addrlen);
+ 		} else {
+ 			print_sockaddr_data_raw(buf, addrlen);
+ 		}
+@@ -713,7 +720,7 @@ decode_sockaddr(struct tcb *const tcp, const kernel_ulong_t addr, int addrlen)
+ 
+ 	memset(&addrbuf.pad[addrlen], 0, sizeof(addrbuf.pad) - addrlen);
+ 
+-	print_sockaddr(&addrbuf, addrlen);
++	print_sockaddr(tcp, &addrbuf, addrlen);
+ 
+ 	return addrbuf.sa.sa_family;
+ }
+diff --git a/strace.c b/strace.c
+index 311e4d6..4c96a98 100644
+--- a/strace.c
++++ b/strace.c
+@@ -2941,7 +2941,7 @@ print_stopped(struct tcb *tcp, const siginfo_t *si, const unsigned int sig)
+ 		printleader(tcp);
+ 		if (si) {
+ 			tprintf("--- %s ", sprintsigname(sig));
+-			printsiginfo(si);
++			printsiginfo(tcp, si);
+ 			tprints(" ---\n");
+ 		} else
+ 			tprintf("--- stopped by %s ---\n", sprintsigname(sig));
+-- 
+2.1.4
+

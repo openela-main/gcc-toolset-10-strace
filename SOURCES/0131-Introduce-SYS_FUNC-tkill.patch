@@ -1,0 +1,415 @@
+From 98cb4de5002be3b81c45489200bcab0ae323123d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=81kos=20Uzonyi?= <uzonyi.akos@gmail.com>
+Date: Mon, 27 Jul 2020 20:54:07 +0200
+Subject: [PATCH 131/138] Introduce SYS_FUNC(tkill)
+
+This is going to be needed to implement pidns support
+in tkill syscall decoder.
+
+syscallent*.h files are updated automatically by:
+  git grep -l 'SEN(kill).*"tkill"' |
+  xargs sed -i '/"tkill"/ s/SEN(kill)/SEN(tkill)/'
+
+* signal.c (SYS_FUNC(tkill)): New syscall decoder.
+* linux/32/syscallent.h: Use SEN(tkill) for "tkill" syscall.
+* linux/64/syscallent.h: Likewise.
+* linux/alpha/syscallent.h: Likewise.
+* linux/arm/syscallent.h: Likewise.
+* linux/avr32/syscallent.h: Likewise.
+* linux/bfin/syscallent.h: Likewise.
+* linux/hppa/syscallent.h: Likewise.
+* linux/i386/syscallent.h: Likewise.
+* linux/ia64/syscallent.h: Likewise.
+* linux/m68k/syscallent.h: Likewise.
+* linux/microblaze/syscallent.h: Likewise.
+* linux/mips/syscallent-n32.h: Likewise.
+* linux/mips/syscallent-n64.h: Likewise.
+* linux/mips/syscallent-o32.h: Likewise.
+* linux/powerpc/syscallent.h: Likewise.
+* linux/powerpc64/syscallent.h: Likewise.
+* linux/s390/syscallent.h: Likewise.
+* linux/s390x/syscallent.h: Likewise.
+* linux/sh/syscallent.h: Likewise.
+* linux/sh64/syscallent.h: Likewise.
+* linux/sparc/syscallent.h: Likewise.
+* linux/sparc64/syscallent.h: Likewise.
+* linux/x32/syscallent.h: Likewise.
+* linux/x86_64/syscallent.h: Likewise.
+* linux/xtensa/syscallent.h: Likewise.
+---
+ linux/32/syscallent.h         | 2 +-
+ linux/64/syscallent.h         | 2 +-
+ linux/alpha/syscallent.h      | 2 +-
+ linux/arm/syscallent.h        | 2 +-
+ linux/avr32/syscallent.h      | 2 +-
+ linux/bfin/syscallent.h       | 2 +-
+ linux/hppa/syscallent.h       | 2 +-
+ linux/i386/syscallent.h       | 2 +-
+ linux/ia64/syscallent.h       | 2 +-
+ linux/m68k/syscallent.h       | 2 +-
+ linux/microblaze/syscallent.h | 2 +-
+ linux/mips/syscallent-n32.h   | 2 +-
+ linux/mips/syscallent-n64.h   | 2 +-
+ linux/mips/syscallent-o32.h   | 2 +-
+ linux/powerpc/syscallent.h    | 2 +-
+ linux/powerpc64/syscallent.h  | 2 +-
+ linux/s390/syscallent.h       | 2 +-
+ linux/s390x/syscallent.h      | 2 +-
+ linux/sh/syscallent.h         | 2 +-
+ linux/sh64/syscallent.h       | 2 +-
+ linux/sparc/syscallent.h      | 2 +-
+ linux/sparc64/syscallent.h    | 2 +-
+ linux/x32/syscallent.h        | 2 +-
+ linux/x86_64/syscallent.h     | 2 +-
+ linux/xtensa/syscallent.h     | 2 +-
+ signal.c                      | 9 +++++++++
+ 26 files changed, 34 insertions(+), 25 deletions(-)
+
+diff --git a/linux/32/syscallent.h b/linux/32/syscallent.h
+index c74ab18..79c36e0 100644
+--- a/linux/32/syscallent.h
++++ b/linux/32/syscallent.h
+@@ -142,7 +142,7 @@
+ /* [127] sched_rr_get_interval */
+ [128] = { 0,	0,		SEN(restart_syscall),		"restart_syscall"	},
+ [129] = { 2,	TS|TP,		SEN(kill),			"kill"			},
+-[130] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[130] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [131] = { 3,	TS|TP,		SEN(tgkill),			"tgkill"		},
+ [132] = { 2,	TS,		SEN(sigaltstack),		"sigaltstack"		},
+ [133] = { 2,	TS,		SEN(rt_sigsuspend),		"rt_sigsuspend"		},
+diff --git a/linux/64/syscallent.h b/linux/64/syscallent.h
+index 3fb1305..ce5602e 100644
+--- a/linux/64/syscallent.h
++++ b/linux/64/syscallent.h
+@@ -135,7 +135,7 @@
+ [127] = { 2,	0,		SEN(sched_rr_get_interval_time64),"sched_rr_get_interval"},
+ [128] = { 0,	0,		SEN(restart_syscall),		"restart_syscall"	},
+ [129] = { 2,	TS|TP,		SEN(kill),			"kill"			},
+-[130] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[130] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [131] = { 3,	TS|TP,		SEN(tgkill),			"tgkill"		},
+ [132] = { 2,	TS,		SEN(sigaltstack),		"sigaltstack"		},
+ [133] = { 2,	TS,		SEN(rt_sigsuspend),		"rt_sigsuspend"		},
+diff --git a/linux/alpha/syscallent.h b/linux/alpha/syscallent.h
+index 93f0b0e..7859b9c 100644
+--- a/linux/alpha/syscallent.h
++++ b/linux/alpha/syscallent.h
+@@ -325,7 +325,7 @@
+ [378] = { 0,	PU|NF,		SEN(gettid),			"gettid"		},
+ [379] = { 3,	TD,		SEN(readahead),			"readahead"		},
+ [380] = { },
+-[381] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[381] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [382] = { 5,	TF,		SEN(setxattr),			"setxattr"		},
+ [383] = { 5,	TF,		SEN(setxattr),			"lsetxattr"		},
+ [384] = { 5,	TD,		SEN(fsetxattr),			"fsetxattr"		},
+diff --git a/linux/arm/syscallent.h b/linux/arm/syscallent.h
+index 73497b6..87b0687 100644
+--- a/linux/arm/syscallent.h
++++ b/linux/arm/syscallent.h
+@@ -245,7 +245,7 @@
+ [235] = { 2,	TF,		SEN(removexattr),		"removexattr"		},
+ [236] = { 2,	TF,		SEN(removexattr),		"lremovexattr"		},
+ [237] = { 2,	TD,		SEN(fremovexattr),		"fremovexattr"		},
+-[238] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[238] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [239] = { 4,	TD|TN,		SEN(sendfile64),		"sendfile64"		},
+ [240] = { 6,	0,		SEN(futex_time32),		"futex"			},
+ [241] = { 3,	0,		SEN(sched_setaffinity),		"sched_setaffinity"	},
+diff --git a/linux/avr32/syscallent.h b/linux/avr32/syscallent.h
+index b3cf2da..491ff8e 100644
+--- a/linux/avr32/syscallent.h
++++ b/linux/avr32/syscallent.h
+@@ -196,7 +196,7 @@
+ [187] = { 2,	TF,		SEN(removexattr),		"removexattr"		},
+ [188] = { 2,	TF,		SEN(removexattr),		"lremovexattr"		},
+ [189] = { 2,	TD,		SEN(fremovexattr),		"fremovexattr"		},
+-[190] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[190] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [191] = { 4,	TD|TN,		SEN(sendfile64),		"sendfile64"		},
+ [192] = { 6,	0,		SEN(futex_time32),		"futex"			},
+ [193] = { 3,	0,		SEN(sched_setaffinity),		"sched_setaffinity"	},
+diff --git a/linux/bfin/syscallent.h b/linux/bfin/syscallent.h
+index b93a844..53d5c23 100644
+--- a/linux/bfin/syscallent.h
++++ b/linux/bfin/syscallent.h
+@@ -244,7 +244,7 @@
+ [235] = { 2,	TF,		SEN(removexattr),		"removexattr"		},
+ [236] = { 2,	TF,		SEN(removexattr),		"lremovexattr"		},
+ [237] = { 2,	TD,		SEN(fremovexattr),		"fremovexattr"		},
+-[238] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[238] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [239] = { 4,	TD|TN,		SEN(sendfile64),		"sendfile64"		},
+ [240] = { 6,	0,		SEN(futex_time32),		"futex"			},
+ [241] = { 3,	0,		SEN(sched_setaffinity),		"sched_setaffinity"	},
+diff --git a/linux/hppa/syscallent.h b/linux/hppa/syscallent.h
+index 31341d4..20cae3c 100644
+--- a/linux/hppa/syscallent.h
++++ b/linux/hppa/syscallent.h
+@@ -211,7 +211,7 @@
+ [205] = { 5,	0,		SEN(printargs),			"acl_set"		},
+ [206] = { 0,	PU|NF,		SEN(gettid),			"gettid"		},
+ [207] = { 4,	TD,		SEN(readahead),			"readahead"		},
+-[208] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[208] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [209] = { 4,	TD|TN,		SEN(sendfile64),		"sendfile64"		},
+ [210] = { 6,	0,		SEN(futex_time32),		"futex"			},
+ [211] = { 3,	0,		SEN(sched_setaffinity),		"sched_setaffinity"	},
+diff --git a/linux/i386/syscallent.h b/linux/i386/syscallent.h
+index efe0ff7..521e7ba 100644
+--- a/linux/i386/syscallent.h
++++ b/linux/i386/syscallent.h
+@@ -244,7 +244,7 @@
+ [235] = { 2,	TF,		SEN(removexattr),		"removexattr"		},
+ [236] = { 2,	TF,		SEN(removexattr),		"lremovexattr"		},
+ [237] = { 2,	TD,		SEN(fremovexattr),		"fremovexattr"		},
+-[238] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[238] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [239] = { 4,	TD|TN,		SEN(sendfile64),		"sendfile64"		},
+ [240] = { 6,	0,		SEN(futex_time32),		"futex"			},
+ [241] = { 3,	0,		SEN(sched_setaffinity),		"sched_setaffinity"	},
+diff --git a/linux/ia64/syscallent.h b/linux/ia64/syscallent.h
+index 8aeda41..c5088e1 100644
+--- a/linux/ia64/syscallent.h
++++ b/linux/ia64/syscallent.h
+@@ -225,7 +225,7 @@
+ [BASE_NR + 202] = { 2,	TF,		SEN(removexattr),		"removexattr"		},
+ [BASE_NR + 203] = { 2,	TF,		SEN(removexattr),		"lremovexattr"		},
+ [BASE_NR + 204] = { 2,	TD,		SEN(fremovexattr),		"fremovexattr"		},
+-[BASE_NR + 205] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[BASE_NR + 205] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [BASE_NR + 206] = { 6,	0,		SEN(futex_time64),		"futex"			},
+ [BASE_NR + 207] = { 3,	0,		SEN(sched_setaffinity),		"sched_setaffinity"	},
+ [BASE_NR + 208] = { 3,	0,		SEN(sched_getaffinity),		"sched_getaffinity"	},
+diff --git a/linux/m68k/syscallent.h b/linux/m68k/syscallent.h
+index 1876bed..107780c 100644
+--- a/linux/m68k/syscallent.h
++++ b/linux/m68k/syscallent.h
+@@ -228,7 +228,7 @@
+ [218 ... 219] = { },
+ [220] = { 3,	TD,		SEN(getdents64),		"getdents64"		},
+ [221] = { 0,	PU|NF,		SEN(gettid),			"gettid"		},
+-[222] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[222] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [223] = { 5,	TF,		SEN(setxattr),			"setxattr"		},
+ [224] = { 5,	TF,		SEN(setxattr),			"lsetxattr"		},
+ [225] = { 5,	TD,		SEN(fsetxattr),			"fsetxattr"		},
+diff --git a/linux/microblaze/syscallent.h b/linux/microblaze/syscallent.h
+index 5d071bc..d830a3e 100644
+--- a/linux/microblaze/syscallent.h
++++ b/linux/microblaze/syscallent.h
+@@ -244,7 +244,7 @@
+ [235] = { 2,	TF,		SEN(removexattr),		"removexattr"		},
+ [236] = { 2,	TF,		SEN(removexattr),		"lremovexattr"		},
+ [237] = { 2,	TD,		SEN(fremovexattr),		"fremovexattr"		},
+-[238] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[238] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [239] = { 4,	TD|TN,		SEN(sendfile64),		"sendfile64"		},
+ [240] = { 6,	0,		SEN(futex_time32),		"futex"			},
+ [241] = { 3,	0,		SEN(sched_setaffinity),		"sched_setaffinity"	},
+diff --git a/linux/mips/syscallent-n32.h b/linux/mips/syscallent-n32.h
+index cfd199d..5ab0c53 100644
+--- a/linux/mips/syscallent-n32.h
++++ b/linux/mips/syscallent-n32.h
+@@ -200,7 +200,7 @@
+ [BASE_NR + 189] = { 2,	TF,		SEN(removexattr),		"removexattr"		},
+ [BASE_NR + 190] = { 2,	TF,		SEN(removexattr),		"lremovexattr"		},
+ [BASE_NR + 191] = { 2,	TD,		SEN(fremovexattr),		"fremovexattr"		},
+-[BASE_NR + 192] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[BASE_NR + 192] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [BASE_NR + 193] = { 1,	TCL,		SEN(time),			"time"			},
+ [BASE_NR + 194] = { 6,	0,		SEN(futex_time32),		"futex"			},
+ [BASE_NR + 195] = { 3,	0,		SEN(sched_setaffinity),		"sched_setaffinity"	},
+diff --git a/linux/mips/syscallent-n64.h b/linux/mips/syscallent-n64.h
+index 7ef6700..1964872 100644
+--- a/linux/mips/syscallent-n64.h
++++ b/linux/mips/syscallent-n64.h
+@@ -200,7 +200,7 @@
+ [BASE_NR + 189] = { 2,	TF,		SEN(removexattr),		"removexattr"		},
+ [BASE_NR + 190] = { 2,	TF,		SEN(removexattr),		"lremovexattr"		},
+ [BASE_NR + 191] = { 2,	TD,		SEN(fremovexattr),		"fremovexattr"		},
+-[BASE_NR + 192] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[BASE_NR + 192] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [BASE_NR + 193] = { 1,	TCL,		SEN(time),			"time"			},
+ [BASE_NR + 194] = { 6,	0,		SEN(futex_time64),		"futex"			},
+ [BASE_NR + 195] = { 3,	0,		SEN(sched_setaffinity),		"sched_setaffinity"	},
+diff --git a/linux/mips/syscallent-o32.h b/linux/mips/syscallent-o32.h
+index d2b26f7..eb8908e 100644
+--- a/linux/mips/syscallent-o32.h
++++ b/linux/mips/syscallent-o32.h
+@@ -245,7 +245,7 @@
+ [BASE_NR + 233] = { 2,	TF,		SEN(removexattr),		"removexattr"		},
+ [BASE_NR + 234] = { 2,	TF,		SEN(removexattr),		"lremovexattr"		},
+ [BASE_NR + 235] = { 2,	TD,		SEN(fremovexattr),		"fremovexattr"		},
+-[BASE_NR + 236] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[BASE_NR + 236] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [BASE_NR + 237] = { 4,	TD|TN,		SEN(sendfile64),		"sendfile64"		},
+ [BASE_NR + 238] = { 6,	0,		SEN(futex_time32),		"futex"			},
+ [BASE_NR + 239] = { 3,	0,		SEN(sched_setaffinity),		"sched_setaffinity"	},
+diff --git a/linux/powerpc/syscallent.h b/linux/powerpc/syscallent.h
+index b0962b4..7a77979 100644
+--- a/linux/powerpc/syscallent.h
++++ b/linux/powerpc/syscallent.h
+@@ -215,7 +215,7 @@
+ [205] = { 3,	TM,		SEN(madvise),			"madvise"		},
+ [206] = { 3,	TM,		SEN(mincore),			"mincore"		},
+ [207] = { 0,	PU|NF,		SEN(gettid),			"gettid"		},
+-[208] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[208] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [209] = { 5,	TF,		SEN(setxattr),			"setxattr"		},
+ [210] = { 5,	TF,		SEN(setxattr),			"lsetxattr"		},
+ [211] = { 5,	TD,		SEN(fsetxattr),			"fsetxattr"		},
+diff --git a/linux/powerpc64/syscallent.h b/linux/powerpc64/syscallent.h
+index 1a0dfb5..f20fd78 100644
+--- a/linux/powerpc64/syscallent.h
++++ b/linux/powerpc64/syscallent.h
+@@ -210,7 +210,7 @@
+ [205] = { 3,	TM,		SEN(madvise),			"madvise"		},
+ [206] = { 3,	TM,		SEN(mincore),			"mincore"		},
+ [207] = { 0,	PU|NF,		SEN(gettid),			"gettid"		},
+-[208] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[208] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [209] = { 5,	TF,		SEN(setxattr),			"setxattr"		},
+ [210] = { 5,	TF,		SEN(setxattr),			"lsetxattr"		},
+ [211] = { 5,	TD,		SEN(fsetxattr),			"fsetxattr"		},
+diff --git a/linux/s390/syscallent.h b/linux/s390/syscallent.h
+index 105089f..6844c7e 100644
+--- a/linux/s390/syscallent.h
++++ b/linux/s390/syscallent.h
+@@ -246,7 +246,7 @@
+ [234] = { 2,	TF,		SEN(removexattr),		"lremovexattr"		},
+ [235] = { 2,	TD,		SEN(fremovexattr),		"fremovexattr"		},
+ [236] = { 0,	PU|NF,		SEN(gettid),			"gettid"		},
+-[237] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[237] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [238] = { 6,	0,		SEN(futex_time32),		"futex"			},
+ [239] = { 3,	0,		SEN(sched_setaffinity),		"sched_setaffinity"	},
+ [240] = { 3,	0,		SEN(sched_getaffinity),		"sched_getaffinity"	},
+diff --git a/linux/s390x/syscallent.h b/linux/s390x/syscallent.h
+index e9cf57a..c805204 100644
+--- a/linux/s390x/syscallent.h
++++ b/linux/s390x/syscallent.h
+@@ -230,7 +230,7 @@
+ [234] = { 2,	TF,		SEN(removexattr),		"lremovexattr"		},
+ [235] = { 2,	TD,		SEN(fremovexattr),		"fremovexattr"		},
+ [236] = { 0,	PU|NF,		SEN(gettid),			"gettid"		},
+-[237] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[237] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [238] = { 6,	0,		SEN(futex_time64),		"futex"			},
+ [239] = { 3,	0,		SEN(sched_setaffinity),		"sched_setaffinity"	},
+ [240] = { 3,	0,		SEN(sched_getaffinity),		"sched_getaffinity"	},
+diff --git a/linux/sh/syscallent.h b/linux/sh/syscallent.h
+index 70dc7da..6a89f75 100644
+--- a/linux/sh/syscallent.h
++++ b/linux/sh/syscallent.h
+@@ -245,7 +245,7 @@
+ [235] = { 2,	TF,		SEN(removexattr),		"removexattr"		},
+ [236] = { 2,	TF,		SEN(removexattr),		"lremovexattr"		},
+ [237] = { 2,	TD,		SEN(fremovexattr),		"fremovexattr"		},
+-[238] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[238] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [239] = { 4,	TD|TN,		SEN(sendfile64),		"sendfile64"		},
+ [240] = { 6,	0,		SEN(futex_time32),		"futex"			},
+ [241] = { 3,	0,		SEN(sched_setaffinity),		"sched_setaffinity"	},
+diff --git a/linux/sh64/syscallent.h b/linux/sh64/syscallent.h
+index eff5dc0..4ec35d3 100644
+--- a/linux/sh64/syscallent.h
++++ b/linux/sh64/syscallent.h
+@@ -271,7 +271,7 @@
+ [263] = { 2,	TF,		SEN(removexattr),		"removexattr"		},
+ [264] = { 2,	TF,		SEN(removexattr),		"lremovexattr"		},
+ [265] = { 2,	TD,		SEN(fremovexattr),		"fremovexattr"		},
+-[266] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[266] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [267] = { 4,	TD|TN,		SEN(sendfile64),		"sendfile64"		},
+ [268] = { 6,	0,		SEN(futex_time64),		"futex"			},
+ [269] = { 3,	0,		SEN(sched_setaffinity),		"sched_setaffinity"	},
+diff --git a/linux/sparc/syscallent.h b/linux/sparc/syscallent.h
+index 8c8bd18..a274791 100644
+--- a/linux/sparc/syscallent.h
++++ b/linux/sparc/syscallent.h
+@@ -192,7 +192,7 @@
+ [184] = { 5,	0,		SEN(query_module),		"query_module"		},
+ [185] = { 2,	0,		SEN(setpgid),			"setpgid"		},
+ [186] = { 2,	TD,		SEN(fremovexattr),		"fremovexattr"		},
+-[187] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[187] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [188] = { 1,	TP|SE,		SEN(exit),			"exit_group"		},
+ [189] = { 1,	0,		SEN(uname),			"uname"			},
+ [190] = { 3,	0,		SEN(init_module),		"init_module"		},
+diff --git a/linux/sparc64/syscallent.h b/linux/sparc64/syscallent.h
+index 0e0e0c4..61c32f9 100644
+--- a/linux/sparc64/syscallent.h
++++ b/linux/sparc64/syscallent.h
+@@ -190,7 +190,7 @@
+ [184] = { 5,	0,		SEN(query_module),		"query_module"		},
+ [185] = { 2,	0,		SEN(setpgid),			"setpgid"		},
+ [186] = { 2,	TD,		SEN(fremovexattr),		"fremovexattr"		},
+-[187] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[187] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [188] = { 1,	TP|SE,		SEN(exit),			"exit_group"		},
+ [189] = { 1,	0,		SEN(uname),			"uname"			},
+ [190] = { 3,	0,		SEN(init_module),		"init_module"		},
+diff --git a/linux/x32/syscallent.h b/linux/x32/syscallent.h
+index db8ecfd..d64060d 100644
+--- a/linux/x32/syscallent.h
++++ b/linux/x32/syscallent.h
+@@ -205,7 +205,7 @@
+ [197] = { 2,	TF,		SEN(removexattr),		"removexattr"		},
+ [198] = { 2,	TF,		SEN(removexattr),		"lremovexattr"		},
+ [199] = { 2,	TD,		SEN(fremovexattr),		"fremovexattr"		},
+-[200] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[200] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [201] = { 1,	TCL,		SEN(time),			"time"			},
+ [202] = { 6,	0,		SEN(futex_time64),		"futex"			},
+ [203] = { 3,	0,		SEN(sched_setaffinity),		"sched_setaffinity"	},
+diff --git a/linux/x86_64/syscallent.h b/linux/x86_64/syscallent.h
+index c69a5aa..027093a 100644
+--- a/linux/x86_64/syscallent.h
++++ b/linux/x86_64/syscallent.h
+@@ -205,7 +205,7 @@
+ [197] = { 2,	TF,		SEN(removexattr),		"removexattr"		},
+ [198] = { 2,	TF,		SEN(removexattr),		"lremovexattr"		},
+ [199] = { 2,	TD,		SEN(fremovexattr),		"fremovexattr"		},
+-[200] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[200] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [201] = { 1,	TCL,		SEN(time),			"time"			},
+ [202] = { 6,	0,		SEN(futex_time64),		"futex"			},
+ [203] = { 3,	0,		SEN(sched_setaffinity),		"sched_setaffinity"	},
+diff --git a/linux/xtensa/syscallent.h b/linux/xtensa/syscallent.h
+index 61f1dd4..6de03d2 100644
+--- a/linux/xtensa/syscallent.h
++++ b/linux/xtensa/syscallent.h
+@@ -124,7 +124,7 @@
+ [121] = { 4,	TP,		SEN(wait4),			"wait4"			},
+ [122] = { 5,	TP,		SEN(waitid),			"waitid"		},
+ [123] = { 2,	TS|TP,		SEN(kill),			"kill"			},
+-[124] = { 2,	TS|TP,		SEN(kill),			"tkill"			},
++[124] = { 2,	TS|TP,		SEN(tkill),			"tkill"			},
+ [125] = { 3,	TS|TP,		SEN(tgkill),			"tgkill"		},
+ [126] = { 1,	0,		SEN(set_tid_address),		"set_tid_address"	},
+ [127] = { 0,	PU|NF,		SEN(gettid),			"gettid"		},
+diff --git a/signal.c b/signal.c
+index 3cb54bb..5f1acac 100644
+--- a/signal.c
++++ b/signal.c
+@@ -446,6 +446,15 @@ SYS_FUNC(kill)
+ 	return RVAL_DECODED;
+ }
+ 
++SYS_FUNC(tkill)
++{
++	tprintf("%d", (int) tcp->u_arg[0]);
++	tprints(", ");
++	printsignal(tcp->u_arg[1]);
++
++	return RVAL_DECODED;
++}
++
+ SYS_FUNC(tgkill)
+ {
+ 	/* tgid, tid */
+-- 
+2.1.4
+

@@ -1,0 +1,1360 @@
+From 4362ddaba8634a5ac6b4add0eaf25eec5f7315f5 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=81kos=20Uzonyi?= <uzonyi.akos@gmail.com>
+Date: Fri, 26 Jun 2020 20:13:28 +0200
+Subject: [PATCH 137/138] Implement testing framework for pidns
+
+* tests/pidns.c: New file.
+* tests/pidns.h: New file.
+* tests/Makefile.am (libtests_a_SOURCES): Add pidns.c, pidns.h.
+* tests/init.sh (test_pidns, test_pidns_run_strace): New functions.
+---
+ tests/Makefile.am |   2 +
+ tests/init.sh     |  30 +++++++
+ tests/pidns.c     | 237 ++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ tests/pidns.h     |  56 +++++++++++++
+ 4 files changed, 325 insertions(+)
+ create mode 100644 tests/pidns.c
+ create mode 100644 tests/pidns.h
+
+Index: strace-5.7/tests/Makefile.am
+===================================================================
+--- strace-5.7.orig/tests/Makefile.am	2020-09-09 19:32:50.846965498 +0200
++++ strace-5.7/tests/Makefile.am	2020-09-09 19:49:54.008575349 +0200
+@@ -44,6 +44,8 @@
+ 	libsocketcall.c \
+ 	lock_file.c \
+ 	overflowuid.c \
++	pidns.c \
++	pidns.h \
+ 	pipe_maxfd.c \
+ 	print_quoted_string.c \
+ 	print_time.c \
+Index: strace-5.7/tests/init.sh
+===================================================================
+--- strace-5.7.orig/tests/init.sh	2020-09-09 19:32:50.846965498 +0200
++++ strace-5.7/tests/init.sh	2020-09-09 19:49:54.008575349 +0200
+@@ -387,6 +387,36 @@
+ 	test_pure_prog_set "$@" < "$srcdir/$NAME.in"
+ }
+ 
++test_pidns_run_strace()
++{
++	local parent_pid init_pid
++
++	check_prog tail
++	check_prog cut
++	check_prog grep
++
++	run_prog > /dev/null
++	run_strace --pidns-translation -f $@ $args > "$EXP"
++
++	# filter out logs made by the parent or init process of the pidns test
++	parent_pid="$(tail -n 2 $LOG | head -n 1 | cut -d' ' -f1)"
++	init_pid="$(tail -n 1 $LOG | cut -d' ' -f1)"
++	grep -E -v "^($parent_pid|$init_pid) " "$LOG" > "$OUT"
++	match_diff "$OUT" "$EXP"
++}
++
++test_pidns()
++{
++	check_prog unshare
++	unshare -Urpf true || framework_skip_ "unshare -Urpf true failed"
++
++	test_pidns_run_strace "$@"
++
++	# test PID translation when /proc is mounted from an other namespace
++	STRACE="unshare -Urpf $STRACE"
++	test_pidns_run_strace "$@"
++}
++
+ check_prog cat
+ check_prog rm
+ 
+Index: strace-5.7/tests/pidns.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ strace-5.7/tests/pidns.c	2020-09-09 19:49:54.009575350 +0200
+@@ -0,0 +1,237 @@
++/*
++ * Testing framework for PID namespace translation
++ *
++ * Copyright (c) 2020 Ákos Uzonyi <uzonyi.akos@gmail.com>
++ * All rights reserved.
++ *
++ * SPDX-License-Identifier: LGPL-2.1-or-later
++ */
++#include "tests.h"
++#include "pidns.h"
++#include "nsfs.h"
++
++#include <errno.h>
++#include <stdio.h>
++#include <string.h>
++#include <sys/types.h>
++#include <signal.h>
++#include <stdlib.h>
++#include <sched.h>
++#include <unistd.h>
++#include <sys/wait.h>
++#include <linux/sched.h>
++#include <fcntl.h>
++#include <sys/ioctl.h>
++
++#ifndef CLONE_NEWUSER
++# define CLONE_NEWUSER 0x10000000
++#endif
++
++#ifndef CLONE_NEWPID
++# define CLONE_NEWPID 0x20000000
++#endif
++
++static bool pidns_translation = false;
++static bool pidns_unshared = false;
++
++/* Our PIDs in strace's namespace */
++static pid_t pidns_strace_ids[PT_COUNT];
++
++void
++pidns_print_leader(void)
++{
++	if (pidns_translation)
++		printf("%-5d ", pidns_strace_ids[PT_TID]);
++}
++
++const char *
++pidns_pid2str(enum pid_type type)
++{
++	static const char format[] = " /* %d in strace's PID NS */";
++	static char buf[PT_COUNT][sizeof(format) + sizeof(int) * 3];
++
++	if (type < 0 || type >= PT_COUNT)
++		return "";
++
++	if (!pidns_unshared || !pidns_strace_ids[type])
++		return "";
++
++	snprintf(buf[type], sizeof(buf[type]), format, pidns_strace_ids[type]);
++	return buf[type];
++}
++
++/**
++ * This function is like fork, but does a few more things. It sets up the
++ * child's PGID and SID according to the parameters. Also it fills the
++ * pidns_strace_ids array in the child's memory with the PIDs of the child in
++ * parent's PID namespace. In the parent it waits for the child to terminate
++ * (but leaves the zombie to use it later as a process group). If the child
++ * terminates with nonzero exit status, the test is failed.
++ *
++ * @param pgid     The process group the child should be moved to. It's expected
++ *                 to be a PID of a zombie process (will be reaped). If
++ *                 negative, leave the child in the process group of the parent.
++ *                 If 0, move the process to its own process group.
++ * @param new_sid  Wheather child should be moved to a new session.
++ */
++static pid_t
++pidns_fork(pid_t pgid, bool new_sid)
++{
++	int strace_ids_pipe[2];
++	if (pipe(strace_ids_pipe) < 0)
++		perror_msg_and_fail("pipe");
++
++	fflush(stdout);
++	pid_t pid = fork();
++	if (pid < 0)
++		perror_msg_and_fail("fork");
++
++	if (!pid) {
++		close(strace_ids_pipe[1]);
++
++		ssize_t len = read(strace_ids_pipe[0], pidns_strace_ids,
++				sizeof(pidns_strace_ids));
++		if (len < 0)
++			perror_msg_and_fail("read");
++		if (len != sizeof(pidns_strace_ids))
++			error_msg_and_fail("read returned < sizeof(pidns_strace_ids)");
++
++		close(strace_ids_pipe[0]);
++
++		if (pidns_strace_ids[PT_SID])
++			setsid();
++
++		return 0;
++	}
++
++	pidns_strace_ids[PT_TID] = pid;
++	pidns_strace_ids[PT_TGID] = pid;
++	pidns_strace_ids[PT_PGID] = 0;
++	pidns_strace_ids[PT_SID] = 0;
++
++	if (!pgid)
++		pgid = pid;
++
++	if (pgid > 0) {
++		if (setpgid(pid, pgid) < 0)
++			perror_msg_and_fail("setpgid");
++
++		pidns_strace_ids[PT_PGID] = pgid;
++	}
++
++	/* Reap group leader to test PGID decoding */
++	if (pgid > 0 && pgid != pid) {
++		int ret = waitpid(pgid, NULL, WNOHANG);
++		if (ret < 0)
++			perror_msg_and_fail("wait");
++		if (!ret)
++			error_msg_and_fail("could not reap group leader");
++	}
++
++	if (new_sid) {
++		pidns_strace_ids[PT_SID] = pid;
++		pidns_strace_ids[PT_PGID] = pid;
++	}
++
++	ssize_t len = write(strace_ids_pipe[1], pidns_strace_ids,
++	                     sizeof(pidns_strace_ids));
++	if (len < 0)
++		perror_msg_and_fail("write");
++	if (len != sizeof(pidns_strace_ids))
++		error_msg_and_fail("write returned < sizeof(pidns_strace_ids)");
++
++	close(strace_ids_pipe[0]);
++	close(strace_ids_pipe[1]);
++
++	/* WNOWAIT: leave the zombie, to be able to use it as a process group */
++	siginfo_t siginfo;
++	if (waitid(P_PID, pid, &siginfo, WEXITED | WNOWAIT) < 0)
++		perror_msg_and_fail("wait");
++	if (siginfo.si_code != CLD_EXITED || siginfo.si_status)
++		error_msg_and_fail("child terminated with nonzero exit status");
++
++	return pid;
++}
++
++static void
++create_init_process(void)
++{
++	int child_pipe[2];
++	if (pipe(child_pipe) < 0)
++		perror_msg_and_fail("pipe");
++
++	pid_t pid = fork();
++	if (pid < 0)
++		perror_msg_and_fail("fork");
++
++	if (!pid) {
++		close(child_pipe[1]);
++		if (read(child_pipe[0], &child_pipe[1], sizeof(int)) != 0)
++			_exit(1);
++		_exit(0);
++	}
++
++	close(child_pipe[0]);
++}
++
++void
++check_ns_ioctl(void)
++{
++	int fd = open("/proc/self/ns/pid", O_RDONLY);
++	if (fd < 0) {
++		if (errno == ENOENT)
++			perror_msg_and_skip("opening /proc/self/ns/pid");
++		else
++			perror_msg_and_fail("opening /proc/self/ns/pid");
++	}
++
++	int userns_fd = ioctl(fd, NS_GET_USERNS);
++	if (userns_fd < 0) {
++		if (errno == ENOTTY)
++			error_msg_and_skip("NS_* ioctl commands are not "
++			                   "supported by the kernel");
++		else
++			perror_msg_and_fail("ioctl(NS_GET_USERNS)");
++	}
++
++	close(userns_fd);
++	close(fd);
++}
++
++void
++pidns_test_init(void)
++{
++	pidns_translation = true;
++
++	check_ns_ioctl();
++
++	if (!pidns_fork(-1, false))
++		return;
++
++	/* Unshare user namespace too, so we do not need to be root */
++	if (unshare(CLONE_NEWUSER | CLONE_NEWPID) < 0) {
++		if (errno == EPERM)
++			perror_msg_and_skip("unshare");
++
++		perror_msg_and_fail("unshare");
++	}
++
++	pidns_unshared = true;
++
++	create_init_process();
++
++	if (!pidns_fork(-1, false))
++		return;
++
++	if (!pidns_fork(-1, true))
++		return;
++
++	pid_t pgid;
++	if (!(pgid = pidns_fork(0, false)))
++		return;
++
++	if (!pidns_fork(pgid, false))
++		return;
++
++	exit(0);
++}
+Index: strace-5.7/tests/pidns.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ strace-5.7/tests/pidns.h	2020-09-09 19:49:54.009575350 +0200
+@@ -0,0 +1,56 @@
++/*
++ * Test PID namespace translation
++ *
++ * Copyright (c) 2020 Ákos Uzonyi <uzonyi.akos@gmail.com>
++ * All rights reserved.
++ *
++ * SPDX-License-Identifier: LGPL-2.1-or-later
++ */
++#ifndef STRACE_PIDNS_H
++#define STRACE_PIDNS_H
++
++#ifdef PIDNS_TRANSLATION
++# define PIDNS_TEST_INIT pidns_test_init()
++#else
++# define PIDNS_TEST_INIT
++#endif
++
++#include <sys/types.h>
++
++enum pid_type {
++	PT_TID,
++	PT_TGID,
++	PT_PGID,
++	PT_SID,
++
++	PT_COUNT,
++	PT_NONE = -1
++};
++
++/* Prints leader (process tid) if pidns_test_init was called */
++void pidns_print_leader(void);
++
++/*
++ * Returns a static buffer containing the translation string of our PID.
++ */
++const char *pidns_pid2str(enum pid_type type);
++
++/**
++ * Skips the test if NS_* ioctl commands are not supported by the kernel.
++ */
++void check_ns_ioctl(void);
++
++/**
++ * Init pidns testing.
++ *
++ * Should be called at the beginning of the test's main function
++ *
++ * This function calls fork a couple of times, and returns in the child
++ * processes. These child processes are in a new PID namespace with different
++ * PID configurations (group leader, session leader, ...). If any child
++ * terminates with nonzero exit status the test is failed. Otherwise the test is
++ * succesful, and the parent process exits with 0.
++ */
++void pidns_test_init(void);
++
++#endif
+\ No newline at end of file
+Index: strace-5.7/tests-m32/Makefile.am
+===================================================================
+--- strace-5.7.orig/tests-m32/Makefile.am	2020-09-09 19:32:50.846965498 +0200
++++ strace-5.7/tests-m32/Makefile.am	2020-09-09 19:49:54.009575350 +0200
+@@ -7,14 +7,14 @@
+ # SPDX-License-Identifier: GPL-2.0-or-later
+ 
+ OS = linux
+-CC = @CC_FOR_M32@
+-ARCH = @arch_m32@
++CC = @CC@
++ARCH = @arch@
+ NATIVE_ARCH = @arch_native@
+-SIZEOF_KERNEL_LONG_T = 4
+-SIZEOF_LONG = 4
+-MPERS_NAME = m32
+-MPERS_CC_FLAGS = @CFLAGS_FOR_M32@ @cc_flags_m32@
+-ARCH_MFLAGS = -DMPERS_IS_$(MPERS_NAME) $(MPERS_CC_FLAGS)
++SIZEOF_KERNEL_LONG_T = @SIZEOF_KERNEL_LONG_T@
++SIZEOF_LONG = @SIZEOF_LONG@
++MPERS_NAME =
++MPERS_CC_FLAGS =
++ARCH_MFLAGS =
+ AM_CFLAGS = $(WARN_CFLAGS)
+ AM_CPPFLAGS = $(ARCH_MFLAGS) \
+ 	      -I$(builddir) \
+@@ -44,6 +44,8 @@
+ 	libsocketcall.c \
+ 	lock_file.c \
+ 	overflowuid.c \
++	pidns.c \
++	pidns.h \
+ 	pipe_maxfd.c \
+ 	print_quoted_string.c \
+ 	print_time.c \
+Index: strace-5.7/tests-m32/init.sh
+===================================================================
+--- strace-5.7.orig/tests-m32/init.sh	2020-09-09 19:32:50.846965498 +0200
++++ strace-5.7/tests-m32/init.sh	2020-09-09 19:49:54.009575350 +0200
+@@ -387,6 +387,36 @@
+ 	test_pure_prog_set "$@" < "$srcdir/$NAME.in"
+ }
+ 
++test_pidns_run_strace()
++{
++	local parent_pid init_pid
++
++	check_prog tail
++	check_prog cut
++	check_prog grep
++
++	run_prog > /dev/null
++	run_strace --pidns-translation -f $@ $args > "$EXP"
++
++	# filter out logs made by the parent or init process of the pidns test
++	parent_pid="$(tail -n 2 $LOG | head -n 1 | cut -d' ' -f1)"
++	init_pid="$(tail -n 1 $LOG | cut -d' ' -f1)"
++	grep -E -v "^($parent_pid|$init_pid) " "$LOG" > "$OUT"
++	match_diff "$OUT" "$EXP"
++}
++
++test_pidns()
++{
++	check_prog unshare
++	unshare -Urpf true || framework_skip_ "unshare -Urpf true failed"
++
++	test_pidns_run_strace "$@"
++
++	# test PID translation when /proc is mounted from an other namespace
++	STRACE="unshare -Urpf $STRACE"
++	test_pidns_run_strace "$@"
++}
++
+ check_prog cat
+ check_prog rm
+ 
+Index: strace-5.7/tests-m32/pidns.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ strace-5.7/tests-m32/pidns.c	2020-09-09 19:49:54.009575350 +0200
+@@ -0,0 +1,237 @@
++/*
++ * Testing framework for PID namespace translation
++ *
++ * Copyright (c) 2020 Ákos Uzonyi <uzonyi.akos@gmail.com>
++ * All rights reserved.
++ *
++ * SPDX-License-Identifier: LGPL-2.1-or-later
++ */
++#include "tests.h"
++#include "pidns.h"
++#include "nsfs.h"
++
++#include <errno.h>
++#include <stdio.h>
++#include <string.h>
++#include <sys/types.h>
++#include <signal.h>
++#include <stdlib.h>
++#include <sched.h>
++#include <unistd.h>
++#include <sys/wait.h>
++#include <linux/sched.h>
++#include <fcntl.h>
++#include <sys/ioctl.h>
++
++#ifndef CLONE_NEWUSER
++# define CLONE_NEWUSER 0x10000000
++#endif
++
++#ifndef CLONE_NEWPID
++# define CLONE_NEWPID 0x20000000
++#endif
++
++static bool pidns_translation = false;
++static bool pidns_unshared = false;
++
++/* Our PIDs in strace's namespace */
++static pid_t pidns_strace_ids[PT_COUNT];
++
++void
++pidns_print_leader(void)
++{
++	if (pidns_translation)
++		printf("%-5d ", pidns_strace_ids[PT_TID]);
++}
++
++const char *
++pidns_pid2str(enum pid_type type)
++{
++	static const char format[] = " /* %d in strace's PID NS */";
++	static char buf[PT_COUNT][sizeof(format) + sizeof(int) * 3];
++
++	if (type < 0 || type >= PT_COUNT)
++		return "";
++
++	if (!pidns_unshared || !pidns_strace_ids[type])
++		return "";
++
++	snprintf(buf[type], sizeof(buf[type]), format, pidns_strace_ids[type]);
++	return buf[type];
++}
++
++/**
++ * This function is like fork, but does a few more things. It sets up the
++ * child's PGID and SID according to the parameters. Also it fills the
++ * pidns_strace_ids array in the child's memory with the PIDs of the child in
++ * parent's PID namespace. In the parent it waits for the child to terminate
++ * (but leaves the zombie to use it later as a process group). If the child
++ * terminates with nonzero exit status, the test is failed.
++ *
++ * @param pgid     The process group the child should be moved to. It's expected
++ *                 to be a PID of a zombie process (will be reaped). If
++ *                 negative, leave the child in the process group of the parent.
++ *                 If 0, move the process to its own process group.
++ * @param new_sid  Wheather child should be moved to a new session.
++ */
++static pid_t
++pidns_fork(pid_t pgid, bool new_sid)
++{
++	int strace_ids_pipe[2];
++	if (pipe(strace_ids_pipe) < 0)
++		perror_msg_and_fail("pipe");
++
++	fflush(stdout);
++	pid_t pid = fork();
++	if (pid < 0)
++		perror_msg_and_fail("fork");
++
++	if (!pid) {
++		close(strace_ids_pipe[1]);
++
++		ssize_t len = read(strace_ids_pipe[0], pidns_strace_ids,
++				sizeof(pidns_strace_ids));
++		if (len < 0)
++			perror_msg_and_fail("read");
++		if (len != sizeof(pidns_strace_ids))
++			error_msg_and_fail("read returned < sizeof(pidns_strace_ids)");
++
++		close(strace_ids_pipe[0]);
++
++		if (pidns_strace_ids[PT_SID])
++			setsid();
++
++		return 0;
++	}
++
++	pidns_strace_ids[PT_TID] = pid;
++	pidns_strace_ids[PT_TGID] = pid;
++	pidns_strace_ids[PT_PGID] = 0;
++	pidns_strace_ids[PT_SID] = 0;
++
++	if (!pgid)
++		pgid = pid;
++
++	if (pgid > 0) {
++		if (setpgid(pid, pgid) < 0)
++			perror_msg_and_fail("setpgid");
++
++		pidns_strace_ids[PT_PGID] = pgid;
++	}
++
++	/* Reap group leader to test PGID decoding */
++	if (pgid > 0 && pgid != pid) {
++		int ret = waitpid(pgid, NULL, WNOHANG);
++		if (ret < 0)
++			perror_msg_and_fail("wait");
++		if (!ret)
++			error_msg_and_fail("could not reap group leader");
++	}
++
++	if (new_sid) {
++		pidns_strace_ids[PT_SID] = pid;
++		pidns_strace_ids[PT_PGID] = pid;
++	}
++
++	ssize_t len = write(strace_ids_pipe[1], pidns_strace_ids,
++	                     sizeof(pidns_strace_ids));
++	if (len < 0)
++		perror_msg_and_fail("write");
++	if (len != sizeof(pidns_strace_ids))
++		error_msg_and_fail("write returned < sizeof(pidns_strace_ids)");
++
++	close(strace_ids_pipe[0]);
++	close(strace_ids_pipe[1]);
++
++	/* WNOWAIT: leave the zombie, to be able to use it as a process group */
++	siginfo_t siginfo;
++	if (waitid(P_PID, pid, &siginfo, WEXITED | WNOWAIT) < 0)
++		perror_msg_and_fail("wait");
++	if (siginfo.si_code != CLD_EXITED || siginfo.si_status)
++		error_msg_and_fail("child terminated with nonzero exit status");
++
++	return pid;
++}
++
++static void
++create_init_process(void)
++{
++	int child_pipe[2];
++	if (pipe(child_pipe) < 0)
++		perror_msg_and_fail("pipe");
++
++	pid_t pid = fork();
++	if (pid < 0)
++		perror_msg_and_fail("fork");
++
++	if (!pid) {
++		close(child_pipe[1]);
++		if (read(child_pipe[0], &child_pipe[1], sizeof(int)) != 0)
++			_exit(1);
++		_exit(0);
++	}
++
++	close(child_pipe[0]);
++}
++
++void
++check_ns_ioctl(void)
++{
++	int fd = open("/proc/self/ns/pid", O_RDONLY);
++	if (fd < 0) {
++		if (errno == ENOENT)
++			perror_msg_and_skip("opening /proc/self/ns/pid");
++		else
++			perror_msg_and_fail("opening /proc/self/ns/pid");
++	}
++
++	int userns_fd = ioctl(fd, NS_GET_USERNS);
++	if (userns_fd < 0) {
++		if (errno == ENOTTY)
++			error_msg_and_skip("NS_* ioctl commands are not "
++			                   "supported by the kernel");
++		else
++			perror_msg_and_fail("ioctl(NS_GET_USERNS)");
++	}
++
++	close(userns_fd);
++	close(fd);
++}
++
++void
++pidns_test_init(void)
++{
++	pidns_translation = true;
++
++	check_ns_ioctl();
++
++	if (!pidns_fork(-1, false))
++		return;
++
++	/* Unshare user namespace too, so we do not need to be root */
++	if (unshare(CLONE_NEWUSER | CLONE_NEWPID) < 0) {
++		if (errno == EPERM)
++			perror_msg_and_skip("unshare");
++
++		perror_msg_and_fail("unshare");
++	}
++
++	pidns_unshared = true;
++
++	create_init_process();
++
++	if (!pidns_fork(-1, false))
++		return;
++
++	if (!pidns_fork(-1, true))
++		return;
++
++	pid_t pgid;
++	if (!(pgid = pidns_fork(0, false)))
++		return;
++
++	if (!pidns_fork(pgid, false))
++		return;
++
++	exit(0);
++}
+Index: strace-5.7/tests-m32/pidns.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ strace-5.7/tests-m32/pidns.h	2020-09-09 19:49:54.010575350 +0200
+@@ -0,0 +1,56 @@
++/*
++ * Test PID namespace translation
++ *
++ * Copyright (c) 2020 Ákos Uzonyi <uzonyi.akos@gmail.com>
++ * All rights reserved.
++ *
++ * SPDX-License-Identifier: LGPL-2.1-or-later
++ */
++#ifndef STRACE_PIDNS_H
++#define STRACE_PIDNS_H
++
++#ifdef PIDNS_TRANSLATION
++# define PIDNS_TEST_INIT pidns_test_init()
++#else
++# define PIDNS_TEST_INIT
++#endif
++
++#include <sys/types.h>
++
++enum pid_type {
++	PT_TID,
++	PT_TGID,
++	PT_PGID,
++	PT_SID,
++
++	PT_COUNT,
++	PT_NONE = -1
++};
++
++/* Prints leader (process tid) if pidns_test_init was called */
++void pidns_print_leader(void);
++
++/*
++ * Returns a static buffer containing the translation string of our PID.
++ */
++const char *pidns_pid2str(enum pid_type type);
++
++/**
++ * Skips the test if NS_* ioctl commands are not supported by the kernel.
++ */
++void check_ns_ioctl(void);
++
++/**
++ * Init pidns testing.
++ *
++ * Should be called at the beginning of the test's main function
++ *
++ * This function calls fork a couple of times, and returns in the child
++ * processes. These child processes are in a new PID namespace with different
++ * PID configurations (group leader, session leader, ...). If any child
++ * terminates with nonzero exit status the test is failed. Otherwise the test is
++ * succesful, and the parent process exits with 0.
++ */
++void pidns_test_init(void);
++
++#endif
+\ No newline at end of file
+Index: strace-5.7/tests-mx32/Makefile.am
+===================================================================
+--- strace-5.7.orig/tests-mx32/Makefile.am	2020-09-09 19:32:50.846965498 +0200
++++ strace-5.7/tests-mx32/Makefile.am	2020-09-09 19:49:54.010575350 +0200
+@@ -7,14 +7,14 @@
+ # SPDX-License-Identifier: GPL-2.0-or-later
+ 
+ OS = linux
+-CC = @CC_FOR_MX32@
+-ARCH = @arch_mx32@
++CC = @CC@
++ARCH = @arch@
+ NATIVE_ARCH = @arch_native@
+ SIZEOF_KERNEL_LONG_T = @SIZEOF_KERNEL_LONG_T@
+-SIZEOF_LONG = 4
+-MPERS_NAME = mx32
+-MPERS_CC_FLAGS = @CFLAGS_FOR_MX32@ @cc_flags_mx32@
+-ARCH_MFLAGS = -DMPERS_IS_$(MPERS_NAME) $(MPERS_CC_FLAGS)
++SIZEOF_LONG = @SIZEOF_LONG@
++MPERS_NAME =
++MPERS_CC_FLAGS =
++ARCH_MFLAGS =
+ AM_CFLAGS = $(WARN_CFLAGS)
+ AM_CPPFLAGS = $(ARCH_MFLAGS) \
+ 	      -I$(builddir) \
+@@ -44,6 +44,8 @@
+ 	libsocketcall.c \
+ 	lock_file.c \
+ 	overflowuid.c \
++	pidns.c \
++	pidns.h \
+ 	pipe_maxfd.c \
+ 	print_quoted_string.c \
+ 	print_time.c \
+Index: strace-5.7/tests-mx32/init.sh
+===================================================================
+--- strace-5.7.orig/tests-mx32/init.sh	2020-09-09 19:32:50.846965498 +0200
++++ strace-5.7/tests-mx32/init.sh	2020-09-09 19:49:54.010575350 +0200
+@@ -387,6 +387,36 @@
+ 	test_pure_prog_set "$@" < "$srcdir/$NAME.in"
+ }
+ 
++test_pidns_run_strace()
++{
++	local parent_pid init_pid
++
++	check_prog tail
++	check_prog cut
++	check_prog grep
++
++	run_prog > /dev/null
++	run_strace --pidns-translation -f $@ $args > "$EXP"
++
++	# filter out logs made by the parent or init process of the pidns test
++	parent_pid="$(tail -n 2 $LOG | head -n 1 | cut -d' ' -f1)"
++	init_pid="$(tail -n 1 $LOG | cut -d' ' -f1)"
++	grep -E -v "^($parent_pid|$init_pid) " "$LOG" > "$OUT"
++	match_diff "$OUT" "$EXP"
++}
++
++test_pidns()
++{
++	check_prog unshare
++	unshare -Urpf true || framework_skip_ "unshare -Urpf true failed"
++
++	test_pidns_run_strace "$@"
++
++	# test PID translation when /proc is mounted from an other namespace
++	STRACE="unshare -Urpf $STRACE"
++	test_pidns_run_strace "$@"
++}
++
+ check_prog cat
+ check_prog rm
+ 
+Index: strace-5.7/tests-mx32/pidns.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ strace-5.7/tests-mx32/pidns.c	2020-09-09 19:49:54.010575350 +0200
+@@ -0,0 +1,237 @@
++/*
++ * Testing framework for PID namespace translation
++ *
++ * Copyright (c) 2020 Ákos Uzonyi <uzonyi.akos@gmail.com>
++ * All rights reserved.
++ *
++ * SPDX-License-Identifier: LGPL-2.1-or-later
++ */
++#include "tests.h"
++#include "pidns.h"
++#include "nsfs.h"
++
++#include <errno.h>
++#include <stdio.h>
++#include <string.h>
++#include <sys/types.h>
++#include <signal.h>
++#include <stdlib.h>
++#include <sched.h>
++#include <unistd.h>
++#include <sys/wait.h>
++#include <linux/sched.h>
++#include <fcntl.h>
++#include <sys/ioctl.h>
++
++#ifndef CLONE_NEWUSER
++# define CLONE_NEWUSER 0x10000000
++#endif
++
++#ifndef CLONE_NEWPID
++# define CLONE_NEWPID 0x20000000
++#endif
++
++static bool pidns_translation = false;
++static bool pidns_unshared = false;
++
++/* Our PIDs in strace's namespace */
++static pid_t pidns_strace_ids[PT_COUNT];
++
++void
++pidns_print_leader(void)
++{
++	if (pidns_translation)
++		printf("%-5d ", pidns_strace_ids[PT_TID]);
++}
++
++const char *
++pidns_pid2str(enum pid_type type)
++{
++	static const char format[] = " /* %d in strace's PID NS */";
++	static char buf[PT_COUNT][sizeof(format) + sizeof(int) * 3];
++
++	if (type < 0 || type >= PT_COUNT)
++		return "";
++
++	if (!pidns_unshared || !pidns_strace_ids[type])
++		return "";
++
++	snprintf(buf[type], sizeof(buf[type]), format, pidns_strace_ids[type]);
++	return buf[type];
++}
++
++/**
++ * This function is like fork, but does a few more things. It sets up the
++ * child's PGID and SID according to the parameters. Also it fills the
++ * pidns_strace_ids array in the child's memory with the PIDs of the child in
++ * parent's PID namespace. In the parent it waits for the child to terminate
++ * (but leaves the zombie to use it later as a process group). If the child
++ * terminates with nonzero exit status, the test is failed.
++ *
++ * @param pgid     The process group the child should be moved to. It's expected
++ *                 to be a PID of a zombie process (will be reaped). If
++ *                 negative, leave the child in the process group of the parent.
++ *                 If 0, move the process to its own process group.
++ * @param new_sid  Wheather child should be moved to a new session.
++ */
++static pid_t
++pidns_fork(pid_t pgid, bool new_sid)
++{
++	int strace_ids_pipe[2];
++	if (pipe(strace_ids_pipe) < 0)
++		perror_msg_and_fail("pipe");
++
++	fflush(stdout);
++	pid_t pid = fork();
++	if (pid < 0)
++		perror_msg_and_fail("fork");
++
++	if (!pid) {
++		close(strace_ids_pipe[1]);
++
++		ssize_t len = read(strace_ids_pipe[0], pidns_strace_ids,
++				sizeof(pidns_strace_ids));
++		if (len < 0)
++			perror_msg_and_fail("read");
++		if (len != sizeof(pidns_strace_ids))
++			error_msg_and_fail("read returned < sizeof(pidns_strace_ids)");
++
++		close(strace_ids_pipe[0]);
++
++		if (pidns_strace_ids[PT_SID])
++			setsid();
++
++		return 0;
++	}
++
++	pidns_strace_ids[PT_TID] = pid;
++	pidns_strace_ids[PT_TGID] = pid;
++	pidns_strace_ids[PT_PGID] = 0;
++	pidns_strace_ids[PT_SID] = 0;
++
++	if (!pgid)
++		pgid = pid;
++
++	if (pgid > 0) {
++		if (setpgid(pid, pgid) < 0)
++			perror_msg_and_fail("setpgid");
++
++		pidns_strace_ids[PT_PGID] = pgid;
++	}
++
++	/* Reap group leader to test PGID decoding */
++	if (pgid > 0 && pgid != pid) {
++		int ret = waitpid(pgid, NULL, WNOHANG);
++		if (ret < 0)
++			perror_msg_and_fail("wait");
++		if (!ret)
++			error_msg_and_fail("could not reap group leader");
++	}
++
++	if (new_sid) {
++		pidns_strace_ids[PT_SID] = pid;
++		pidns_strace_ids[PT_PGID] = pid;
++	}
++
++	ssize_t len = write(strace_ids_pipe[1], pidns_strace_ids,
++	                     sizeof(pidns_strace_ids));
++	if (len < 0)
++		perror_msg_and_fail("write");
++	if (len != sizeof(pidns_strace_ids))
++		error_msg_and_fail("write returned < sizeof(pidns_strace_ids)");
++
++	close(strace_ids_pipe[0]);
++	close(strace_ids_pipe[1]);
++
++	/* WNOWAIT: leave the zombie, to be able to use it as a process group */
++	siginfo_t siginfo;
++	if (waitid(P_PID, pid, &siginfo, WEXITED | WNOWAIT) < 0)
++		perror_msg_and_fail("wait");
++	if (siginfo.si_code != CLD_EXITED || siginfo.si_status)
++		error_msg_and_fail("child terminated with nonzero exit status");
++
++	return pid;
++}
++
++static void
++create_init_process(void)
++{
++	int child_pipe[2];
++	if (pipe(child_pipe) < 0)
++		perror_msg_and_fail("pipe");
++
++	pid_t pid = fork();
++	if (pid < 0)
++		perror_msg_and_fail("fork");
++
++	if (!pid) {
++		close(child_pipe[1]);
++		if (read(child_pipe[0], &child_pipe[1], sizeof(int)) != 0)
++			_exit(1);
++		_exit(0);
++	}
++
++	close(child_pipe[0]);
++}
++
++void
++check_ns_ioctl(void)
++{
++	int fd = open("/proc/self/ns/pid", O_RDONLY);
++	if (fd < 0) {
++		if (errno == ENOENT)
++			perror_msg_and_skip("opening /proc/self/ns/pid");
++		else
++			perror_msg_and_fail("opening /proc/self/ns/pid");
++	}
++
++	int userns_fd = ioctl(fd, NS_GET_USERNS);
++	if (userns_fd < 0) {
++		if (errno == ENOTTY)
++			error_msg_and_skip("NS_* ioctl commands are not "
++			                   "supported by the kernel");
++		else
++			perror_msg_and_fail("ioctl(NS_GET_USERNS)");
++	}
++
++	close(userns_fd);
++	close(fd);
++}
++
++void
++pidns_test_init(void)
++{
++	pidns_translation = true;
++
++	check_ns_ioctl();
++
++	if (!pidns_fork(-1, false))
++		return;
++
++	/* Unshare user namespace too, so we do not need to be root */
++	if (unshare(CLONE_NEWUSER | CLONE_NEWPID) < 0) {
++		if (errno == EPERM)
++			perror_msg_and_skip("unshare");
++
++		perror_msg_and_fail("unshare");
++	}
++
++	pidns_unshared = true;
++
++	create_init_process();
++
++	if (!pidns_fork(-1, false))
++		return;
++
++	if (!pidns_fork(-1, true))
++		return;
++
++	pid_t pgid;
++	if (!(pgid = pidns_fork(0, false)))
++		return;
++
++	if (!pidns_fork(pgid, false))
++		return;
++
++	exit(0);
++}
+Index: strace-5.7/tests-mx32/pidns.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ strace-5.7/tests-mx32/pidns.h	2020-09-09 19:49:54.010575350 +0200
+@@ -0,0 +1,56 @@
++/*
++ * Test PID namespace translation
++ *
++ * Copyright (c) 2020 Ákos Uzonyi <uzonyi.akos@gmail.com>
++ * All rights reserved.
++ *
++ * SPDX-License-Identifier: LGPL-2.1-or-later
++ */
++#ifndef STRACE_PIDNS_H
++#define STRACE_PIDNS_H
++
++#ifdef PIDNS_TRANSLATION
++# define PIDNS_TEST_INIT pidns_test_init()
++#else
++# define PIDNS_TEST_INIT
++#endif
++
++#include <sys/types.h>
++
++enum pid_type {
++	PT_TID,
++	PT_TGID,
++	PT_PGID,
++	PT_SID,
++
++	PT_COUNT,
++	PT_NONE = -1
++};
++
++/* Prints leader (process tid) if pidns_test_init was called */
++void pidns_print_leader(void);
++
++/*
++ * Returns a static buffer containing the translation string of our PID.
++ */
++const char *pidns_pid2str(enum pid_type type);
++
++/**
++ * Skips the test if NS_* ioctl commands are not supported by the kernel.
++ */
++void check_ns_ioctl(void);
++
++/**
++ * Init pidns testing.
++ *
++ * Should be called at the beginning of the test's main function
++ *
++ * This function calls fork a couple of times, and returns in the child
++ * processes. These child processes are in a new PID namespace with different
++ * PID configurations (group leader, session leader, ...). If any child
++ * terminates with nonzero exit status the test is failed. Otherwise the test is
++ * succesful, and the parent process exits with 0.
++ */
++void pidns_test_init(void);
++
++#endif
+\ No newline at end of file
+Index: strace-5.7/tests/Makefile.in
+===================================================================
+--- strace-5.7.orig/tests/Makefile.in	2020-09-09 19:46:24.904450714 +0200
++++ strace-5.7/tests/Makefile.in	2020-09-09 19:51:23.607628754 +0200
+@@ -531,7 +531,7 @@
+ 	libtests_a-libmmsg.$(OBJEXT) \
+ 	libtests_a-libsocketcall.$(OBJEXT) \
+ 	libtests_a-lock_file.$(OBJEXT) \
+-	libtests_a-overflowuid.$(OBJEXT) \
++	libtests_a-overflowuid.$(OBJEXT) libtests_a-pidns.$(OBJEXT) \
+ 	libtests_a-pipe_maxfd.$(OBJEXT) \
+ 	libtests_a-print_quoted_string.$(OBJEXT) \
+ 	libtests_a-print_time.$(OBJEXT) \
+@@ -3899,6 +3899,7 @@
+ 	./$(DEPDIR)/libtests_a-libsocketcall.Po \
+ 	./$(DEPDIR)/libtests_a-lock_file.Po \
+ 	./$(DEPDIR)/libtests_a-overflowuid.Po \
++	./$(DEPDIR)/libtests_a-pidns.Po \
+ 	./$(DEPDIR)/libtests_a-pipe_maxfd.Po \
+ 	./$(DEPDIR)/libtests_a-print_quoted_string.Po \
+ 	./$(DEPDIR)/libtests_a-print_time.Po \
+@@ -5122,6 +5123,8 @@
+ 	libsocketcall.c \
+ 	lock_file.c \
+ 	overflowuid.c \
++	pidns.c \
++	pidns.h \
+ 	pipe_maxfd.c \
+ 	print_quoted_string.c \
+ 	print_time.c \
+@@ -9926,6 +9929,7 @@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-libsocketcall.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-lock_file.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-overflowuid.Po@am__quote@ # am--include-marker
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-pidns.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-pipe_maxfd.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-print_quoted_string.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-print_time.Po@am__quote@ # am--include-marker
+@@ -10651,6 +10655,20 @@
+ @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+ @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libtests_a-overflowuid.obj `if test -f 'overflowuid.c'; then $(CYGPATH_W) 'overflowuid.c'; else $(CYGPATH_W) '$(srcdir)/overflowuid.c'; fi`
+ 
++libtests_a-pidns.o: pidns.c
++@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libtests_a-pidns.o -MD -MP -MF $(DEPDIR)/libtests_a-pidns.Tpo -c -o libtests_a-pidns.o `test -f 'pidns.c' || echo '$(srcdir)/'`pidns.c
++@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libtests_a-pidns.Tpo $(DEPDIR)/libtests_a-pidns.Po
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='pidns.c' object='libtests_a-pidns.o' libtool=no @AMDEPBACKSLASH@
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
++@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libtests_a-pidns.o `test -f 'pidns.c' || echo '$(srcdir)/'`pidns.c
++
++libtests_a-pidns.obj: pidns.c
++@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libtests_a-pidns.obj -MD -MP -MF $(DEPDIR)/libtests_a-pidns.Tpo -c -o libtests_a-pidns.obj `if test -f 'pidns.c'; then $(CYGPATH_W) 'pidns.c'; else $(CYGPATH_W) '$(srcdir)/pidns.c'; fi`
++@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libtests_a-pidns.Tpo $(DEPDIR)/libtests_a-pidns.Po
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='pidns.c' object='libtests_a-pidns.obj' libtool=no @AMDEPBACKSLASH@
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
++@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libtests_a-pidns.obj `if test -f 'pidns.c'; then $(CYGPATH_W) 'pidns.c'; else $(CYGPATH_W) '$(srcdir)/pidns.c'; fi`
++
+ libtests_a-pipe_maxfd.o: pipe_maxfd.c
+ @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libtests_a-pipe_maxfd.o -MD -MP -MF $(DEPDIR)/libtests_a-pipe_maxfd.Tpo -c -o libtests_a-pipe_maxfd.o `test -f 'pipe_maxfd.c' || echo '$(srcdir)/'`pipe_maxfd.c
+ @am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libtests_a-pipe_maxfd.Tpo $(DEPDIR)/libtests_a-pipe_maxfd.Po
+@@ -11748,6 +11766,7 @@
+ 	-rm -f ./$(DEPDIR)/libtests_a-libsocketcall.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-lock_file.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-overflowuid.Po
++	-rm -f ./$(DEPDIR)/libtests_a-pidns.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-pipe_maxfd.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-print_quoted_string.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-print_time.Po
+@@ -12605,6 +12624,7 @@
+ 	-rm -f ./$(DEPDIR)/libtests_a-libsocketcall.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-lock_file.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-overflowuid.Po
++	-rm -f ./$(DEPDIR)/libtests_a-pidns.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-pipe_maxfd.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-print_quoted_string.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-print_time.Po
+Index: strace-5.7/tests-m32/Makefile.in
+===================================================================
+--- strace-5.7.orig/tests-m32/Makefile.in	2020-09-09 19:49:34.530563739 +0200
++++ strace-5.7/tests-m32/Makefile.in	2020-09-09 19:52:01.333651241 +0200
+@@ -531,7 +531,7 @@
+ 	libtests_a-libmmsg.$(OBJEXT) \
+ 	libtests_a-libsocketcall.$(OBJEXT) \
+ 	libtests_a-lock_file.$(OBJEXT) \
+-	libtests_a-overflowuid.$(OBJEXT) \
++	libtests_a-overflowuid.$(OBJEXT) libtests_a-pidns.$(OBJEXT) \
+ 	libtests_a-pipe_maxfd.$(OBJEXT) \
+ 	libtests_a-print_quoted_string.$(OBJEXT) \
+ 	libtests_a-print_time.$(OBJEXT) \
+@@ -3899,6 +3899,7 @@
+ 	./$(DEPDIR)/libtests_a-libsocketcall.Po \
+ 	./$(DEPDIR)/libtests_a-lock_file.Po \
+ 	./$(DEPDIR)/libtests_a-overflowuid.Po \
++	./$(DEPDIR)/libtests_a-pidns.Po \
+ 	./$(DEPDIR)/libtests_a-pipe_maxfd.Po \
+ 	./$(DEPDIR)/libtests_a-print_quoted_string.Po \
+ 	./$(DEPDIR)/libtests_a-print_time.Po \
+@@ -5122,6 +5123,8 @@
+ 	libsocketcall.c \
+ 	lock_file.c \
+ 	overflowuid.c \
++	pidns.c \
++	pidns.h \
+ 	pipe_maxfd.c \
+ 	print_quoted_string.c \
+ 	print_time.c \
+@@ -9926,6 +9929,7 @@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-libsocketcall.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-lock_file.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-overflowuid.Po@am__quote@ # am--include-marker
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-pidns.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-pipe_maxfd.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-print_quoted_string.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-print_time.Po@am__quote@ # am--include-marker
+@@ -10651,6 +10655,20 @@
+ @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+ @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libtests_a-overflowuid.obj `if test -f 'overflowuid.c'; then $(CYGPATH_W) 'overflowuid.c'; else $(CYGPATH_W) '$(srcdir)/overflowuid.c'; fi`
+ 
++libtests_a-pidns.o: pidns.c
++@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libtests_a-pidns.o -MD -MP -MF $(DEPDIR)/libtests_a-pidns.Tpo -c -o libtests_a-pidns.o `test -f 'pidns.c' || echo '$(srcdir)/'`pidns.c
++@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libtests_a-pidns.Tpo $(DEPDIR)/libtests_a-pidns.Po
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='pidns.c' object='libtests_a-pidns.o' libtool=no @AMDEPBACKSLASH@
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
++@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libtests_a-pidns.o `test -f 'pidns.c' || echo '$(srcdir)/'`pidns.c
++
++libtests_a-pidns.obj: pidns.c
++@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libtests_a-pidns.obj -MD -MP -MF $(DEPDIR)/libtests_a-pidns.Tpo -c -o libtests_a-pidns.obj `if test -f 'pidns.c'; then $(CYGPATH_W) 'pidns.c'; else $(CYGPATH_W) '$(srcdir)/pidns.c'; fi`
++@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libtests_a-pidns.Tpo $(DEPDIR)/libtests_a-pidns.Po
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='pidns.c' object='libtests_a-pidns.obj' libtool=no @AMDEPBACKSLASH@
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
++@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libtests_a-pidns.obj `if test -f 'pidns.c'; then $(CYGPATH_W) 'pidns.c'; else $(CYGPATH_W) '$(srcdir)/pidns.c'; fi`
++
+ libtests_a-pipe_maxfd.o: pipe_maxfd.c
+ @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libtests_a-pipe_maxfd.o -MD -MP -MF $(DEPDIR)/libtests_a-pipe_maxfd.Tpo -c -o libtests_a-pipe_maxfd.o `test -f 'pipe_maxfd.c' || echo '$(srcdir)/'`pipe_maxfd.c
+ @am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libtests_a-pipe_maxfd.Tpo $(DEPDIR)/libtests_a-pipe_maxfd.Po
+@@ -11748,6 +11766,7 @@
+ 	-rm -f ./$(DEPDIR)/libtests_a-libsocketcall.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-lock_file.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-overflowuid.Po
++	-rm -f ./$(DEPDIR)/libtests_a-pidns.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-pipe_maxfd.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-print_quoted_string.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-print_time.Po
+@@ -12605,6 +12624,7 @@
+ 	-rm -f ./$(DEPDIR)/libtests_a-libsocketcall.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-lock_file.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-overflowuid.Po
++	-rm -f ./$(DEPDIR)/libtests_a-pidns.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-pipe_maxfd.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-print_quoted_string.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-print_time.Po
+Index: strace-5.7/tests-mx32/Makefile.in
+===================================================================
+--- strace-5.7.orig/tests-mx32/Makefile.in	2020-09-09 19:49:39.557566736 +0200
++++ strace-5.7/tests-mx32/Makefile.in	2020-09-09 19:52:26.062665980 +0200
+@@ -531,7 +531,7 @@
+ 	libtests_a-libmmsg.$(OBJEXT) \
+ 	libtests_a-libsocketcall.$(OBJEXT) \
+ 	libtests_a-lock_file.$(OBJEXT) \
+-	libtests_a-overflowuid.$(OBJEXT) \
++	libtests_a-overflowuid.$(OBJEXT) libtests_a-pidns.$(OBJEXT) \
+ 	libtests_a-pipe_maxfd.$(OBJEXT) \
+ 	libtests_a-print_quoted_string.$(OBJEXT) \
+ 	libtests_a-print_time.$(OBJEXT) \
+@@ -3899,6 +3899,7 @@
+ 	./$(DEPDIR)/libtests_a-libsocketcall.Po \
+ 	./$(DEPDIR)/libtests_a-lock_file.Po \
+ 	./$(DEPDIR)/libtests_a-overflowuid.Po \
++	./$(DEPDIR)/libtests_a-pidns.Po \
+ 	./$(DEPDIR)/libtests_a-pipe_maxfd.Po \
+ 	./$(DEPDIR)/libtests_a-print_quoted_string.Po \
+ 	./$(DEPDIR)/libtests_a-print_time.Po \
+@@ -5122,6 +5123,8 @@
+ 	libsocketcall.c \
+ 	lock_file.c \
+ 	overflowuid.c \
++	pidns.c \
++	pidns.h \
+ 	pipe_maxfd.c \
+ 	print_quoted_string.c \
+ 	print_time.c \
+@@ -9926,6 +9929,7 @@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-libsocketcall.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-lock_file.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-overflowuid.Po@am__quote@ # am--include-marker
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-pidns.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-pipe_maxfd.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-print_quoted_string.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libtests_a-print_time.Po@am__quote@ # am--include-marker
+@@ -10651,6 +10655,20 @@
+ @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+ @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libtests_a-overflowuid.obj `if test -f 'overflowuid.c'; then $(CYGPATH_W) 'overflowuid.c'; else $(CYGPATH_W) '$(srcdir)/overflowuid.c'; fi`
+ 
++libtests_a-pidns.o: pidns.c
++@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libtests_a-pidns.o -MD -MP -MF $(DEPDIR)/libtests_a-pidns.Tpo -c -o libtests_a-pidns.o `test -f 'pidns.c' || echo '$(srcdir)/'`pidns.c
++@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libtests_a-pidns.Tpo $(DEPDIR)/libtests_a-pidns.Po
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='pidns.c' object='libtests_a-pidns.o' libtool=no @AMDEPBACKSLASH@
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
++@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libtests_a-pidns.o `test -f 'pidns.c' || echo '$(srcdir)/'`pidns.c
++
++libtests_a-pidns.obj: pidns.c
++@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libtests_a-pidns.obj -MD -MP -MF $(DEPDIR)/libtests_a-pidns.Tpo -c -o libtests_a-pidns.obj `if test -f 'pidns.c'; then $(CYGPATH_W) 'pidns.c'; else $(CYGPATH_W) '$(srcdir)/pidns.c'; fi`
++@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libtests_a-pidns.Tpo $(DEPDIR)/libtests_a-pidns.Po
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='pidns.c' object='libtests_a-pidns.obj' libtool=no @AMDEPBACKSLASH@
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
++@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -c -o libtests_a-pidns.obj `if test -f 'pidns.c'; then $(CYGPATH_W) 'pidns.c'; else $(CYGPATH_W) '$(srcdir)/pidns.c'; fi`
++
+ libtests_a-pipe_maxfd.o: pipe_maxfd.c
+ @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libtests_a_CPPFLAGS) $(CPPFLAGS) $(AM_CFLAGS) $(CFLAGS) -MT libtests_a-pipe_maxfd.o -MD -MP -MF $(DEPDIR)/libtests_a-pipe_maxfd.Tpo -c -o libtests_a-pipe_maxfd.o `test -f 'pipe_maxfd.c' || echo '$(srcdir)/'`pipe_maxfd.c
+ @am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libtests_a-pipe_maxfd.Tpo $(DEPDIR)/libtests_a-pipe_maxfd.Po
+@@ -11748,6 +11766,7 @@
+ 	-rm -f ./$(DEPDIR)/libtests_a-libsocketcall.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-lock_file.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-overflowuid.Po
++	-rm -f ./$(DEPDIR)/libtests_a-pidns.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-pipe_maxfd.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-print_quoted_string.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-print_time.Po
+@@ -12605,6 +12624,7 @@
+ 	-rm -f ./$(DEPDIR)/libtests_a-libsocketcall.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-lock_file.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-overflowuid.Po
++	-rm -f ./$(DEPDIR)/libtests_a-pidns.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-pipe_maxfd.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-print_quoted_string.Po
+ 	-rm -f ./$(DEPDIR)/libtests_a-print_time.Po
