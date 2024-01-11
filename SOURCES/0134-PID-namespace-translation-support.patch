@@ -1,0 +1,1478 @@
+From bf533b84fd7200399c9b0e68fdf10c6aaf8b1a7a Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=81kos=20Uzonyi?= <uzonyi.akos@gmail.com>
+Date: Mon, 8 Jun 2020 19:01:03 +0200
+Subject: [PATCH 134/138] PID namespace translation support
+
+* defs.h (pidns_translation): New variable.
+(tcb): Add pid_ns field.
+(RVAL_MASK): Change value from 013 to 017.
+(RVAL_TID, RVAL_SID, RVAL_TGID, RVAL_PGID): New definitions.
+(pid_type): New enum.
+(pidns_init, translate_pid, get_proc_pid, printpid, printpid_tgid_pgid):
+New function declarations.
+* largefile_wrappers.h (fstat_fd): New macro.
+* pidns.c: New file.
+* trie.c: New file.
+* trie.h: New file.
+* Makefile.am (libstrace_a_SOURCES): Add trie.c, trie.h, pidns.c.
+* strace.c (pidns_translation): New variable.
+(init): Add --pidns-translation option.
+* syscall.c (syscall_exiting_trace): Handle RVAL_* return values.
+* NEWS: Mention this.
+* strace.1.in: Add description for new option.
+
+Co-Authored-by: Eugene Syromyatnikov <evgsyr@gmail.com>
+
+Conflicts:
+	NEWS
+---
+ Makefile.am          |   3 +
+ defs.h               |  56 ++++-
+ largefile_wrappers.h |   2 +
+ pidns.c              | 608 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ strace.1.in          |   4 +
+ strace.c             |   9 +
+ syscall.c            |  15 ++
+ trie.c               | 290 ++++++++++++++++++++++++
+ trie.h               |  92 ++++++++
+ 9 files changed, 1078 insertions(+), 1 deletion(-)
+ create mode 100644 pidns.c
+ create mode 100644 trie.c
+ create mode 100644 trie.h
+
+Index: strace-5.7/Makefile.am
+===================================================================
+--- strace-5.7.orig/Makefile.am	2020-09-09 15:50:13.471900510 +0200
++++ strace-5.7/Makefile.am	2020-09-09 15:52:09.159983257 +0200
+@@ -233,6 +233,7 @@
+ 	personality.c	\
+ 	pidfd_getfd.c	\
+ 	pidfd_open.c	\
++	pidns.c		\
+ 	pkeys.c		\
+ 	poll.c		\
+ 	prctl.c		\
+@@ -344,6 +345,8 @@
+ 	time.c		\
+ 	times.c		\
+ 	trace_event.h	\
++	trie.c 		\
++	trie.h 		\
+ 	truncate.c	\
+ 	ubi.c		\
+ 	ucopy.c		\
+Index: strace-5.7/defs.h
+===================================================================
+--- strace-5.7.orig/defs.h	2020-09-09 15:50:13.473900511 +0200
++++ strace-5.7/defs.h	2020-09-09 15:52:09.159983257 +0200
+@@ -280,6 +280,13 @@
+ 	struct timespec etime;	/* Syscall entry time (CLOCK_MONOTONIC) */
+ 	struct timespec delay_expiration_time; /* When does the delay end */
+ 
++	/*
++	 * The ID of the PID namespace of this process
++	 * (inode number of /proc/<pid>/ns/pid)
++	 * (0: not initialized)
++	 */
++	unsigned int pid_ns;
++
+ 	struct mmap_cache_t *mmap_cache;
+ 
+ 	/*
+@@ -413,7 +420,11 @@
+ # define RVAL_HEX	001	/* hex format */
+ # define RVAL_OCTAL	002	/* octal format */
+ # define RVAL_FD		010	/* file descriptor */
+-# define RVAL_MASK	013	/* mask for these values */
++# define RVAL_TID	011	/* task ID */
++# define RVAL_SID	012	/* session ID */
++# define RVAL_TGID	013	/* thread group ID */
++# define RVAL_PGID	014	/* process group ID */
++# define RVAL_MASK	017	/* mask for these values */
+ 
+ # define RVAL_STR	020	/* Print `auxstr' field after return val */
+ # define RVAL_NONE	040	/* Print nothing */
+@@ -428,6 +439,16 @@
+ 
+ # define indirect_ipccall(tcp) (tcp_sysent(tcp)->sys_flags & TRACE_INDIRECT_SUBCALL)
+ 
++enum pid_type {
++	PT_TID,
++	PT_TGID,
++	PT_PGID,
++	PT_SID,
++
++	PT_COUNT,
++	PT_NONE = -1
++};
++
+ enum sock_proto {
+ 	SOCK_PROTO_UNKNOWN,
+ 	SOCK_PROTO_UNIX,
+@@ -469,6 +490,7 @@
+ extern int Tflag_width;
+ extern bool iflag;
+ extern bool count_wallclock;
++extern unsigned int pidns_translation;
+ /* are we filtering traces based on paths? */
+ extern struct path_set {
+ 	const char **paths_selected;
+@@ -984,6 +1006,29 @@
+ extern kernel_ulong_t *
+ fetch_indirect_syscall_args(struct tcb *, kernel_ulong_t addr, unsigned int n_args);
+ 
++extern void pidns_init(void);
++
++/**
++ * Returns the pid of the tracee as present in /proc of the tracer (can be
++ * different from tcp->pid if /proc and the tracer process are in different PID
++ * namespaces).
++ */
++extern int get_proc_pid(struct tcb *);
++
++/**
++ * Translates a pid from tracee's namespace to our namepace.
++ *
++ * @param tcp             The tcb of the tracee
++ *                        (NULL: from_id is in strace's namespace. Useful for
++ *                         getting the proc PID of from_id)
++ * @param from_id         The id to be translated
++ * @param type            The PID type of from_id
++ * @param proc_pid_ptr    If not NULL, writes the proc PID to this location
++ * @return                The translated id, or 0 if translation fails.
++ */
++extern int translate_pid(struct tcb *, int dest_id, enum pid_type type,
++		    int *proc_pid_ptr);
++
+ extern void
+ dumpiov_in_msghdr(struct tcb *, kernel_ulong_t addr, kernel_ulong_t data_size);
+ 
+@@ -1059,6 +1104,15 @@
+  * of the tracee the descriptor tcp).  This is a stub.
+  */
+ extern void printfd_pid_tracee_ns(struct tcb *tcp, pid_t pid, int fd);
++
++/** Prints a PID specified in the tracee's PID namespace */
++extern void printpid(struct tcb *, int pid, enum pid_type type);
++
++/**
++ * Prints pid as a TGID if positive, and PGID if negative
++ * (like the first argument of kill).
++ */
++extern void printpid_tgid_pgid(struct tcb *, int pid);
+ extern void print_sockaddr(struct tcb *, const void *sa, int len);
+ extern bool
+ print_inet_addr(int af, const void *addr, unsigned int len, const char *var_name);
+Index: strace-5.7/largefile_wrappers.h
+===================================================================
+--- strace-5.7.orig/largefile_wrappers.h	2020-09-09 15:50:13.473900511 +0200
++++ strace-5.7/largefile_wrappers.h	2020-09-09 15:50:18.017903762 +0200
+@@ -29,6 +29,7 @@
+ #  else
+ #   define fcntl_fd fcntl
+ #  endif
++#  define fstat_fd fstat64
+ #  define strace_stat_t struct stat64
+ #  define stat_file stat64
+ #  define struct_dirent struct dirent64
+@@ -39,6 +40,7 @@
+ #  define open_file open
+ #  define fopen_stream fopen
+ #  define fcntl_fd fcntl
++#  define fstat_fd fstat
+ #  define strace_stat_t struct stat
+ #  define stat_file stat
+ #  define struct_dirent struct dirent
+Index: strace-5.7/pidns.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ strace-5.7/pidns.c	2020-09-09 15:50:18.018903762 +0200
+@@ -0,0 +1,608 @@
++/*
++ * Copyright (c) 2020 Ákos Uzonyi <uzonyi.akos@gmail.com>
++ * All rights reserved.
++ *
++ * SPDX-License-Identifier: LGPL-2.1-or-later
++ */
++
++#include "defs.h"
++
++
++#include <dirent.h>
++#include <fcntl.h>
++#include <stdint.h>
++#include <string.h>
++#include <unistd.h>
++
++#include <asm/unistd.h>
++
++#include <sys/ioctl.h>
++#include <sys/param.h>
++#include <sys/types.h>
++#include <sys/stat.h>
++
++#include "largefile_wrappers.h"
++#include "trie.h"
++#include "nsfs.h"
++#include "xmalloc.h"
++#include "xstring.h"
++
++/**
++ * Key:   PID NS ID
++ * Value: a btree:
++ *           Key:   a process PID in NS
++ *           Value: the process's PID as present in /proc
++ */
++static struct trie *ns_pid_to_proc_pid[PT_COUNT];
++
++/**
++ * Key:   Proc PID
++ * Value: struct proc_data
++ */
++static struct trie *proc_data_cache;
++
++static bool ns_get_parent_enotty = false;
++
++static const char tid_str[]  = "NSpid:\t";
++static const char tgid_str[] = "NStgid:\t";
++static const char pgid_str[] = "NSpgid:\t";
++static const char sid_str[]  = "NSsid:\t";
++
++static const struct {
++	const char *str;
++	size_t size;
++} id_strs[PT_COUNT] = {
++	[PT_TID] =  { tid_str,  sizeof(tid_str)  - 1 },
++	[PT_TGID] = { tgid_str, sizeof(tgid_str) - 1 },
++	[PT_PGID] = { pgid_str, sizeof(pgid_str) - 1 },
++	[PT_SID] =  { sid_str,  sizeof(sid_str)  - 1 },
++};
++
++
++/**
++ * Limit on PID NS hierarchy depth, imposed since Linux 3.7. NS traversal
++ * is not possible before Linux 4.9, so we consider this limit pretty universal.
++ */
++#define MAX_NS_DEPTH 32
++
++static const size_t ns_id_size = sizeof(unsigned int) * 8;
++static const uint8_t ptr_sz_lg = (sizeof(void *) == 8 ? 6 : 5);
++
++static int pid_max;
++static uint8_t pid_max_size, pid_max_size_lg;
++
++struct proc_data {
++	int proc_pid;
++	int ns_count;
++	unsigned int ns_hierarchy[MAX_NS_DEPTH];
++	int id_count[PT_COUNT];
++	int id_hierarchy[PT_COUNT][MAX_NS_DEPTH];
++};
++
++/**
++ * Helper function for creating a trie.
++ *
++ * For node_key_bits and data_block_key_bits 4 is used (so trie height is 32 / 4
++ * = 8, and node sizes are 8 byte * 2^4 = 128 bytes), which seems to be a good
++ * tradeoff between memory usage and lookup time. It should not be too large,
++ * since there can be large holes between PIDs, and it would be just a waste of
++ * memory having large nodes with lot of NULL pointers in them.
++ */
++static struct trie *
++create_trie_4(uint8_t key_size, uint8_t item_size_lg, uint64_t empty_value)
++{
++	struct trie *t = trie_create(key_size, item_size_lg, 4, 4, empty_value);
++	if (!t)
++		error_msg_and_die("creating trie failed");
++
++	return t;
++}
++
++void
++pidns_init(void)
++{
++	if (proc_data_cache)
++		return;
++
++	pid_max = INT_MAX;
++	if (read_int_from_file("/proc/sys/kernel/pid_max", &pid_max) < 0)
++		debug_func_perror_msg("reading /proc/sys/kernel/pid_max");
++	pid_max_size = ilog2_32(pid_max - 1) + 1;
++	pid_max_size_lg = ilog2_32(pid_max_size - 1) + 1;
++
++	for (int i = 0; i < PT_COUNT; i++)
++		ns_pid_to_proc_pid[i] = create_trie_4(ns_id_size, ptr_sz_lg, 0);
++
++	proc_data_cache = create_trie_4(pid_max_size, ptr_sz_lg, 0);
++}
++
++static void
++put_proc_pid(unsigned int ns, int ns_pid, enum pid_type type, int proc_pid)
++{
++	struct trie *b = (struct trie *) (uintptr_t) trie_get(ns_pid_to_proc_pid[type], ns);
++	if (!b) {
++		b = create_trie_4(pid_max_size, pid_max_size_lg, 0);
++		trie_set(ns_pid_to_proc_pid[type], ns, (uint64_t) (uintptr_t) b);
++	}
++	trie_set(b, ns_pid, proc_pid);
++}
++
++static int
++get_cached_proc_pid(unsigned int ns, int ns_pid, enum pid_type type)
++{
++	struct trie *b = (struct trie *) (uintptr_t)
++		trie_get(ns_pid_to_proc_pid[type], ns);
++	if (!b)
++		return 0;
++
++	return trie_get(b, ns_pid);
++}
++
++/**
++ * Helper function, converts pid to string, or to "self" for pid == 0.
++ * Uses static buffer for operation.
++ */
++static const char *
++pid_to_str(pid_t pid)
++{
++	if (!pid)
++		return "self";
++
++	static char buf[sizeof("-2147483648")];
++	xsprintf(buf, "%d", pid);
++	return buf;
++}
++
++/**
++ * Returns a list of PID NS IDs for the specified PID.
++ *
++ * @param proc_pid PID (as present in /proc) to get information for.
++ * @param ns_buf   Pointer to buffer that is able to contain at least
++ *                 ns_buf_size items.
++ * @return         Amount of NS in list. 0 indicates error.
++ */
++static size_t
++get_ns_hierarchy(int proc_pid, unsigned int *ns_buf, size_t ns_buf_size)
++{
++	char path[PATH_MAX + 1];
++	xsprintf(path, "/proc/%s/ns/pid", pid_to_str(proc_pid));
++
++	int fd = open_file(path, O_RDONLY);
++	if (fd < 0)
++		return 0;
++
++	size_t n = 0;
++	while (n < ns_buf_size) {
++		strace_stat_t st;
++		if (fstat_fd(fd, &st))
++			break;
++
++		ns_buf[n++] = st.st_ino;
++		if (n >= ns_buf_size)
++			break;
++
++		if (ns_get_parent_enotty)
++			break;
++
++		int parent_fd = ioctl(fd, NS_GET_PARENT);
++		if (parent_fd < 0) {
++			switch (errno) {
++			case EPERM:
++				break;
++
++			case ENOTTY:
++				ns_get_parent_enotty = true;
++				error_msg("NS_* ioctl commands are not "
++					  "supported by the kernel");
++				break;
++
++			default:
++				perror_func_msg("ioctl(NS_GET_PARENT)");
++				break;
++			}
++
++			break;
++		}
++
++		close(fd);
++		fd = parent_fd;
++	}
++
++	close(fd);
++
++	return n;
++}
++
++/**
++ * Get list of IDs present in NS* proc status record. IDs are placed as they are
++ * stored in /proc (from top to bottom of NS hierarchy).
++ *
++ * @param proc_pid    PID (as present in /proc) to get information for.
++ * @param id_buf      Pointer to buffer that is able to contain at least
++ *                    MAX_NS_DEPTH items. Can be NULL.
++ * @param type        Type of ID requested.
++ * @return            Number of items stored in id_list. 0 indicates error.
++ */
++static size_t
++get_id_list(int proc_pid, int *id_buf, enum pid_type type)
++{
++	const char *ns_str = id_strs[type].str;
++	size_t ns_str_size = id_strs[type].size;
++
++	size_t n = 0;
++
++	char status_path[PATH_MAX + 1];
++	xsprintf(status_path, "/proc/%s/status", pid_to_str(proc_pid));
++	FILE *f = fopen_stream(status_path, "r");
++	if (!f)
++		return 0;
++
++	char *line = NULL;
++	size_t linesize = 0;
++	char *p = NULL;
++
++	while (getline(&line, &linesize, f) > 0) {
++		if (strncmp(line, ns_str, ns_str_size) == 0) {
++			p = line + ns_str_size;
++			break;
++		}
++	}
++
++	while (p) {
++		errno = 0;
++		long id = strtol(p, NULL, 10);
++
++		if (id < 0 || id > INT_MAX || errno) {
++			perror_func_msg("converting pid (%ld) to int", id);
++			break;
++		}
++
++		if (id_buf)
++			id_buf[n] = (int) id;
++
++		n++;
++		strsep(&p, "\t");
++	}
++
++	free(line);
++	fclose(f);
++
++	return n;
++}
++
++/**
++ * Returns whether the /proc filesystem's PID namespace is the same as strace's.
++ */
++static bool
++is_proc_ours(void)
++{
++	static int cached_val = -1;
++
++	if (cached_val < 0)
++		cached_val = get_id_list(0, NULL, PT_TID) <= 1;
++
++	return cached_val;
++}
++
++/**
++ * Returns the PID namespace of the tracee
++ */
++static unsigned int
++get_ns(struct tcb *tcp)
++{
++	if (!tcp->pid_ns) {
++		int proc_pid = 0;
++		translate_pid(NULL, tcp->pid, PT_TID, &proc_pid);
++
++		if (proc_pid)
++			get_ns_hierarchy(proc_pid, &tcp->pid_ns, 1);
++	}
++
++	return tcp->pid_ns;
++}
++
++/**
++ * Returns the PID namespace of strace
++ */
++static unsigned int
++get_our_ns(void)
++{
++	static unsigned int our_ns = 0;
++	static bool our_ns_initialised = false;
++
++	if (!our_ns_initialised) {
++		get_ns_hierarchy(0, &our_ns, 1);
++		our_ns_initialised = true;
++	}
++
++	return our_ns;
++}
++
++/**
++ * Returns the cached proc_data struct associated with proc_pid.
++ * If none found, allocates a new proc_data.
++ */
++static struct proc_data *
++get_or_create_proc_data(int proc_pid)
++{
++	struct proc_data *pd = (struct proc_data *) (uintptr_t)
++		trie_get(proc_data_cache, proc_pid);
++
++	if (!pd) {
++		pd = calloc(1, sizeof(*pd));
++		if (!pd)
++			return NULL;
++
++		pd->proc_pid = proc_pid;
++		trie_set(proc_data_cache, proc_pid, (uint64_t) (uintptr_t) pd);
++	}
++
++	return pd;
++}
++
++/**
++ * Updates the proc_data from /proc
++ * If the process does not exists, returns false, and frees the proc_data
++ */
++static bool
++update_proc_data(struct proc_data *pd, enum pid_type type)
++{
++	pd->ns_count = get_ns_hierarchy(pd->proc_pid,
++		pd->ns_hierarchy, MAX_NS_DEPTH);
++	if (!pd->ns_count)
++		goto fail;
++
++	pd->id_count[type] = get_id_list(pd->proc_pid,
++		pd->id_hierarchy[type], type);
++	if (!pd->id_count[type])
++		goto fail;
++
++	return true;
++
++fail:
++	trie_set(proc_data_cache, pd->proc_pid, (uint64_t) (uintptr_t) NULL);
++	free(pd);
++	return false;
++}
++
++/**
++ * Paramters for id translation
++ */
++struct translate_id_params {
++	/* The result (output) */
++	int result_id;
++	/* The proc data of the process (output) */
++	struct proc_data *pd;
++
++	/* The namespace to be translated from */
++	unsigned int from_ns;
++	/* The id to be translated */
++	int from_id;
++	/* The type of the id */
++	enum pid_type type;
++};
++
++/**
++ * Translates an id to our namespace, given the proc_pid of the process,
++ * by reading files in /proc.
++ *
++ * @param tip      The parameters
++ * @param proc_pid The proc pid of the process.
++ *                 If 0, use the cached values in tip->pd.
++ */
++static void
++translate_id_proc_pid(struct translate_id_params *tip, int proc_pid)
++{
++	struct proc_data *pd = proc_pid ?
++		get_or_create_proc_data(proc_pid) :
++		tip->pd;
++
++	tip->result_id = 0;
++	tip->pd = NULL;
++
++	if (!pd)
++		return;
++
++	if (proc_pid && !update_proc_data(pd, tip->type))
++		return;
++
++	if (!pd->ns_count || pd->id_count[tip->type] < pd->ns_count)
++		return;
++
++	int *id_hierarchy = pd->id_hierarchy[tip->type];
++	int id_count = pd->id_count[tip->type];
++
++	for (int i = 0; i < pd->ns_count; i++) {
++		unsigned int ns = pd->ns_hierarchy[i];
++		int ns_id = id_hierarchy[id_count - i - 1];
++		int our_id = id_hierarchy[id_count - pd->ns_count];
++
++		if (ns != tip->from_ns)
++			continue;
++
++		if (ns_id != tip->from_id)
++			return;
++
++		tip->result_id = our_id;
++		tip->pd = pd;
++		return;
++	}
++}
++
++/**
++ * Translates an id to our namespace by reading all proc entries in a directory.
++ * The directory is either /proc or /proc/<pid>/task.
++ *
++ *
++ * @param tip            The parameters
++ * @param path           The path of the directory to be read.
++ * @param read_task_dir  Whether recurse to "task" subdirectory.
++ */
++static void
++translate_id_dir(struct translate_id_params *tip, const char *path,
++                 bool read_task_dir)
++{
++	DIR *dir = opendir(path);
++	if (!dir) {
++		debug_func_perror_msg("opening dir: %s", path);
++		return;
++	}
++
++	while (!tip->result_id) {
++		errno = 0;
++		struct_dirent *entry = read_dir(dir);
++		if (!entry) {
++			if (errno)
++				perror_func_msg("readdir");
++
++			break;
++		}
++
++		if (entry->d_type != DT_DIR)
++			continue;
++
++		errno = 0;
++		long proc_pid = strtol(entry->d_name, NULL, 10);
++		if (proc_pid < 1 || proc_pid > INT_MAX || errno)
++			continue;
++
++		if (read_task_dir) {
++			char task_dir_path[PATH_MAX + 1];
++			xsprintf(task_dir_path, "/proc/%ld/task", proc_pid);
++			translate_id_dir(tip, task_dir_path, false);
++		}
++
++		if (tip->result_id)
++			break;
++
++		translate_id_proc_pid(tip, proc_pid);
++	}
++
++	closedir(dir);
++}
++
++/**
++ * Iterator function of the proc_data_cache for id translation.
++ * If the cache contains the id we are looking for, reads the corresponding
++ * directory in /proc, and if cache is valid, saves the result.
++ */
++static void
++proc_data_cache_iterator_fn(void* fn_data, uint64_t key, uint64_t val)
++{
++	struct translate_id_params *tip = (struct translate_id_params *)fn_data;
++	struct proc_data *pd = (struct proc_data *) (uintptr_t) val;
++
++	if (!pd)
++		return;
++
++	/* Result already found in an earlier iteration */
++	if (tip->result_id)
++		return;
++
++	/* Translate from cache */
++	tip->pd = pd;
++	translate_id_proc_pid(tip, 0);
++	if (!tip->result_id)
++		return;
++
++	/* Now translate from actual data in /proc, to check cache validity */
++	translate_id_proc_pid(tip, pd->proc_pid);
++}
++
++int
++translate_pid(struct tcb *tcp, int from_id, enum pid_type type,
++              int *proc_pid_ptr)
++{
++	if (from_id <= 0 || type < 0 || type >= PT_COUNT)
++		return 0;
++
++	/* If translation is trivial */
++	if ((!tcp || get_ns(tcp) == get_our_ns()) &&
++	    (!proc_pid_ptr || is_proc_ours())) {
++		if (proc_pid_ptr)
++			*proc_pid_ptr = from_id;
++
++		return from_id;
++	}
++
++	struct translate_id_params tip = {
++		.result_id = 0,
++		.pd = NULL,
++		.from_ns = tcp ? get_ns(tcp) : get_our_ns(),
++		.from_id = from_id,
++		.type = type,
++	};
++
++	if (!tip.from_ns)
++		return 0;
++
++	if (ns_get_parent_enotty)
++		return 0;
++
++	/* Look for a cached proc_pid for this (from_ns, from_id) pair */
++	int cached_proc_pid = get_cached_proc_pid(tip.from_ns, tip.from_id,
++		tip.type);
++	if (cached_proc_pid) {
++		translate_id_proc_pid(&tip, cached_proc_pid);
++		if (tip.result_id)
++			goto exit;
++	}
++
++	/* Iterate through the cache, find potential proc_data */
++	trie_iterate_keys(proc_data_cache, 0, pid_max - 1,
++		proc_data_cache_iterator_fn, &tip);
++	/* (proc_data_cache_iterator_fn takes care about updating proc_data) */
++	if (tip.result_id)
++		goto exit;
++
++	/* No cache helped, read all entries in /proc */
++	translate_id_dir(&tip, "/proc", true);
++
++exit:
++	if (tip.pd) {
++		if (tip.pd->proc_pid)
++			put_proc_pid(tip.from_ns, tip.from_id, tip.type,
++				tip.pd->proc_pid);
++
++		if (proc_pid_ptr)
++			*proc_pid_ptr = tip.pd->proc_pid;
++	}
++
++	return tip.result_id;
++}
++
++int
++get_proc_pid(struct tcb *tcp)
++{
++	int proc_pid = 0;
++	translate_pid(NULL, tcp->pid, PT_TID, &proc_pid);
++	return proc_pid;
++}
++
++static void
++printpid_translation(struct tcb *tcp, int pid, enum pid_type type)
++{
++	if (!pidns_translation)
++		return;
++
++	int strace_pid = translate_pid(tcp, pid, type, NULL);
++	if (strace_pid && strace_pid != pid)
++		tprintf_comment("%d in strace's PID NS", strace_pid);
++}
++
++void
++printpid(struct tcb *tcp, int pid, enum pid_type type)
++{
++	tprintf("%d", pid);
++	printpid_translation(tcp, pid, type);
++}
++
++void
++printpid_tgid_pgid(struct tcb *tcp, int pid)
++{
++	tprintf("%d", pid);
++	if (pid > 0)
++		printpid_translation(tcp,  pid, PT_TGID);
++	else if (pid < -1)
++		printpid_translation(tcp, -pid, PT_PGID);
++}
+Index: strace-5.7/strace.1.in
+===================================================================
+--- strace-5.7.orig/strace.1.in	2020-09-09 15:50:13.475900513 +0200
++++ strace-5.7/strace.1.in	2020-09-09 15:50:18.018903762 +0200
+@@ -1075,6 +1075,10 @@
+ protocol-specific information associated with socket file descriptors,
+ block/character device number associated with device file descriptors,
+ and PIDs asociated with pidfd file descriptors.
++.TP
++.B \-\-pidns\-translation
++If strace and tracee are in different PID namespaces, print PIDs in
++strace's namespace, too.
+ .SS Statistics
+ .TP 12
+ .B \-c
+Index: strace-5.7/strace.c
+===================================================================
+--- strace-5.7.orig/strace.c	2020-09-09 15:50:13.476900514 +0200
++++ strace-5.7/strace.c	2020-09-09 15:52:08.646982890 +0200
+@@ -133,6 +133,8 @@
+ static int post_attach_sigstop = TCB_IGNORE_ONE_SIGSTOP;
+ #define use_seize (post_attach_sigstop == 0)
+ 
++unsigned int pidns_translation;
++
+ static bool detach_on_execve;
+ 
+ static int exit_code;
+@@ -1998,6 +2000,8 @@
+ 
+ 	os_release = get_os_release();
+ 
++	pidns_init();
++
+ 	shared_log = stderr;
+ 	set_sortby(DEFAULT_SORTBY);
+ 	set_personality(DEFAULT_PERSONALITY);
+@@ -2022,6 +2026,7 @@
+ 		GETOPT_FOLLOWFORKS,
+ 		GETOPT_OUTPUT_SEPARATELY,
+ 		GETOPT_TS,
++		GETOPT_PIDNS_TRANSLATION,
+ 
+ 		GETOPT_QUAL_TRACE,
+ 		GETOPT_QUAL_ABBREV,
+@@ -2072,6 +2077,7 @@
+ 		{ "summary-wall-clock", no_argument,	   0, 'w' },
+ 		{ "strings-in-hex",	optional_argument, 0, GETOPT_HEX_STR },
+ 		{ "const-print-style",	required_argument, 0, 'X' },
++		{ "pidns-translation",	no_argument      , 0, GETOPT_PIDNS_TRANSLATION },
+ 		{ "successful-only",	no_argument,	   0, 'z' },
+ 		{ "failed-only",	no_argument,	   0, 'Z' },
+ 		{ "failing-only",	no_argument,	   0, 'Z' },
+@@ -2285,6 +2291,9 @@
+ 		case 'y':
+ 			yflag_short++;
+ 			break;
++		case GETOPT_PIDNS_TRANSLATION:
++			pidns_translation++;
++			break;
+ 		case 'z':
+ 			clear_number_set_array(status_set, 1);
+ 			add_number_to_set(STATUS_SUCCESSFUL, status_set);
+Index: strace-5.7/syscall.c
+===================================================================
+--- strace-5.7.orig/syscall.c	2020-09-09 15:50:13.477900514 +0200
++++ strace-5.7/syscall.c	2020-09-09 15:50:18.019903763 +0200
+@@ -930,6 +930,21 @@
+ 					tprintf("= %" PRI_kld, tcp->u_rval);
+ 				}
+ 				break;
++			case RVAL_TID:
++			case RVAL_SID:
++			case RVAL_TGID:
++			case RVAL_PGID: {
++				#define _(_t) [RVAL_##_t - RVAL_TID] = PT_##_t
++				static const enum pid_type types[] = {
++					_(TID), _(SID), _(TGID), _(PGID),
++				};
++				#undef _
++
++				tprints("= ");
++				printpid(tcp, tcp->u_rval,
++					 types[(sys_res & RVAL_MASK) - RVAL_TID]);
++				break;
++			}
+ 			default:
+ 				error_msg("invalid rval format");
+ 				break;
+Index: strace-5.7/trie.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ strace-5.7/trie.c	2020-09-09 15:50:18.019903763 +0200
+@@ -0,0 +1,290 @@
++/*
++ * Simple trie implementation for key-value mapping storage
++ *
++ * Copyright (c) 2020 Ákos Uzonyi <uzonyi.akos@gmail.com>
++ * All rights reserved.
++ *
++ * SPDX-License-Identifier: LGPL-2.1-or-later
++ */
++
++#ifdef HAVE_CONFIG_H
++# include "config.h"
++#endif
++
++#include <stdlib.h>
++#include <stdio.h>
++
++#include "trie.h"
++#include "xmalloc.h"
++
++static const uint8_t ptr_sz_lg = (sizeof(void *) == 8 ? 6 : 5);
++
++/**
++ * Returns lg2 of node size in bits for the specific level of the trie.
++ */
++static uint8_t
++trie_get_node_size(struct trie *t, uint8_t depth)
++{
++	/* Last level contains data and we allow it having a different size */
++	if (depth == t->max_depth)
++		return t->data_block_key_bits + t->item_size_lg;
++	/* Last level of the tree can be smaller */
++	if (depth == t->max_depth - 1)
++		return (t->key_size - t->data_block_key_bits - 1) %
++		t->node_key_bits + 1 + ptr_sz_lg;
++
++	return t->node_key_bits + ptr_sz_lg;
++}
++
++/**
++ * Provides starting offset of bits in key corresponding to the node index
++ * at the specific level.
++ */
++static uint8_t
++trie_get_node_bit_offs(struct trie *t, uint8_t depth)
++{
++	uint8_t offs;
++
++	if (depth == t->max_depth)
++		return 0;
++
++	offs = t->data_block_key_bits;
++
++	if (depth == t->max_depth - 1)
++		return offs;
++
++	/* data_block_size + remainder */
++	offs += trie_get_node_size(t, t->max_depth - 1) - ptr_sz_lg;
++	offs += (t->max_depth - depth - 2) * t->node_key_bits;
++
++	return offs;
++}
++
++struct trie *
++trie_create(uint8_t key_size, uint8_t item_size_lg, uint8_t node_key_bits,
++            uint8_t data_block_key_bits, uint64_t empty_value)
++{
++	if (item_size_lg > 6)
++		return NULL;
++	if (key_size > 64)
++		return NULL;
++	if (node_key_bits < 1)
++		return NULL;
++	if (data_block_key_bits < 1 || data_block_key_bits > key_size)
++		return NULL;
++
++	struct trie *t = malloc(sizeof(*t));
++	if (!t)
++		return NULL;
++
++	t->empty_value = empty_value;
++	t->data = NULL;
++	t->item_size_lg = item_size_lg;
++	t->node_key_bits = node_key_bits;
++	t->data_block_key_bits = data_block_key_bits;
++	t->key_size = key_size;
++	t->max_depth = (key_size - data_block_key_bits + node_key_bits - 1)
++		/ t->node_key_bits;
++
++	if (item_size_lg != 6)
++		t->empty_value &= (((uint64_t) 1 << (1 << t->item_size_lg)) - 1);
++
++	return t;
++}
++
++static void *
++trie_create_data_block(struct trie *t)
++{
++	uint64_t fill_value = t->empty_value;
++	for (int i = 1; i < 1 << (6 - t->item_size_lg); i++) {
++		fill_value <<= (1 << t->item_size_lg);
++		fill_value |= t->empty_value;
++	}
++
++	uint8_t sz = t->data_block_key_bits + t->item_size_lg;
++	if (sz < 6)
++		sz = 6;
++
++	size_t count = 1 << (sz - 6);
++	uint64_t *data_block = xcalloc(count, 8);
++
++	for (size_t i = 0; i < count; i++)
++		data_block[i] = fill_value;
++
++	return data_block;
++}
++
++static uint64_t *
++trie_get_node(struct trie *t, uint64_t key, bool auto_create)
++{
++	void **cur_node = &(t->data);
++
++	if (t->key_size < 64 && key > (uint64_t) 1 << t->key_size)
++		return NULL;
++
++	for (uint8_t cur_depth = 0; cur_depth <= t->max_depth; cur_depth++) {
++		uint8_t offs = trie_get_node_bit_offs(t, cur_depth);
++		uint8_t sz = trie_get_node_size(t, cur_depth);
++
++		if (!*cur_node) {
++			if (!auto_create)
++				return NULL;
++
++			if (cur_depth == t->max_depth)
++				*cur_node = trie_create_data_block(t);
++			else
++				*cur_node = xcalloc(1 << sz, 1);
++		}
++
++		if (cur_depth == t->max_depth)
++			break;
++
++		size_t pos = (key >> offs) & ((1 << (sz - ptr_sz_lg)) - 1);
++		cur_node = (((void **) (*cur_node)) + pos);
++	}
++
++	return (uint64_t *) (*cur_node);
++}
++
++static void
++trie_data_block_calc_pos(struct trie *t, uint64_t key,
++                         uint64_t *pos, uint64_t *mask, uint64_t *offs)
++{
++	uint64_t key_mask;
++
++	key_mask = (1 << t->data_block_key_bits) - 1;
++	*pos = (key & key_mask) >> (6 - t->item_size_lg);
++
++	if (t->item_size_lg == 6) {
++		*offs = 0;
++		*mask = -1;
++		return;
++	}
++
++	key_mask = (1 << (6 - t->item_size_lg)) - 1;
++	*offs = (key & key_mask) * (1 << t->item_size_lg);
++
++	*mask = (((uint64_t) 1 << (1 << t->item_size_lg)) - 1) << *offs;
++}
++
++bool
++trie_set(struct trie *t, uint64_t key, uint64_t val)
++{
++	uint64_t *data = trie_get_node(t, key, true);
++	if (!data)
++		return false;
++
++	uint64_t pos, mask, offs;
++	trie_data_block_calc_pos(t, key, &pos, &mask, &offs);
++
++	data[pos] &= ~mask;
++	data[pos] |= (val << offs) & mask;
++
++	return true;
++}
++
++static uint64_t
++trie_data_block_get(struct trie *t, uint64_t *data, uint64_t key)
++{
++	if (!data)
++		return t->empty_value;
++
++	uint64_t pos, mask, offs;
++	trie_data_block_calc_pos(t, key, &pos, &mask, &offs);
++
++	return (data[pos] & mask) >> offs;
++}
++
++uint64_t
++trie_get(struct trie *b, uint64_t key)
++{
++	return trie_data_block_get(b, trie_get_node(b, key, false), key);
++}
++
++static uint64_t
++trie_iterate_keys_node(struct trie *t,
++                       trie_iterate_fn fn, void *fn_data,
++                       void *node, uint64_t start, uint64_t end,
++                       uint8_t depth)
++{
++	if (start > end || !node)
++		return 0;
++
++	if (t->key_size < 64) {
++		uint64_t key_max = ((uint64_t) 1 << t->key_size) - 1;
++		if (end > key_max)
++			end = key_max;
++	}
++
++	if (depth == t->max_depth) {
++		for (uint64_t i = start; i <= end; i++)
++			fn(fn_data, i, trie_data_block_get(t,
++				(uint64_t *) node, i));
++
++		return end - start + 1;
++	}
++
++	uint8_t parent_node_bit_off = depth == 0 ?
++		t->key_size :
++		trie_get_node_bit_offs(t, depth - 1);
++
++	uint64_t first_key_in_node = start &
++		(uint64_t) -1 << parent_node_bit_off;
++
++	uint8_t node_bit_off = trie_get_node_bit_offs(t, depth);
++	uint8_t node_key_bits = parent_node_bit_off - node_bit_off;
++	uint64_t mask = ((uint64_t) 1 << (node_key_bits)) - 1;
++	uint64_t start_index = (start >> node_bit_off) & mask;
++	uint64_t end_index = (end >> node_bit_off) & mask;
++	uint64_t child_key_count = (uint64_t) 1 << node_bit_off;
++
++	uint64_t count = 0;
++
++	for (uint64_t i = start_index; i <= end_index; i++) {
++		uint64_t child_start = first_key_in_node + i * child_key_count;
++		uint64_t child_end = first_key_in_node +
++			(i + 1) * child_key_count - 1;
++
++		if (child_start < start)
++			child_start = start;
++		if (child_end > end)
++			child_end = end;
++
++		count += trie_iterate_keys_node(t, fn, fn_data,
++			((void **) node)[i], child_start, child_end,
++			depth + 1);
++	}
++
++	return count;
++}
++
++uint64_t trie_iterate_keys(struct trie *t, uint64_t start, uint64_t end,
++                           trie_iterate_fn fn, void *fn_data)
++{
++	return trie_iterate_keys_node(t, fn, fn_data, t->data,
++		start, end, 0);
++}
++
++static void
++trie_free_node(struct trie *t, void *node, uint8_t depth)
++{
++	if (!node)
++		return;
++
++	if (depth >= t->max_depth)
++		goto free_node;
++
++	size_t sz = 1 << (trie_get_node_size(t, depth) - ptr_sz_lg);
++	for (size_t i = 0; i < sz; i++)
++		trie_free_node(t, ((void **) node)[i], depth + 1);
++
++free_node:
++	free(node);
++}
++
++void
++trie_free(struct trie *t)
++{
++	trie_free_node(t, t->data, 0);
++	free(t);
++}
+Index: strace-5.7/trie.h
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ strace-5.7/trie.h	2020-09-09 15:50:18.019903763 +0200
+@@ -0,0 +1,92 @@
++/*
++ * Simple trie interface
++ *
++ * Copyright (c) 2020 Ákos Uzonyi <uzonyi.akos@gmail.com>
++ * All rights reserved.
++ *
++ * SPDX-License-Identifier: LGPL-2.1-or-later
++ */
++
++#ifndef STRACE_TRIE_H
++#define STRACE_TRIE_H
++
++#include <stdbool.h>
++#include <stdint.h>
++
++/**
++ * Trie control structure.
++ * Trie implemented here has the following properties:
++ *  * It allows storing values of the same size, the size can vary from 1 bit to
++ *    64 bit values (only power of 2 sizes are allowed).
++ *  * The key can be up to 64 bits in size.
++ *  * It has separate configuration for node size and data block size.
++ *
++ * How bits of key are used for different node levels:
++ *
++ *   highest bits                                                  lowest bits
++ *  | node_key_bits | node_key_bits | ... | <remainder> | data_block_key_bits |
++ *  \_________________________________________________________________________/
++ *                                 key_size
++ *
++ * So, the remainder is used on the lowest non-data node level.
++ *
++ * As of now, it doesn't implement any mechanisms for resizing/changing key
++ * size.  De-fragmentation is also unsupported currently.
++ */
++struct trie {
++	/** Return value of trie_get if key is not found */
++	uint64_t empty_value;
++
++	/** Pointer to root node */
++	void *data;
++
++	/** Key size in bits (0..64). */
++	uint8_t key_size;
++
++	/**
++	 * Size of the stored values in log2 bits (0..6).
++	 * (6: 64 bit values, 5: 32 bit values, ...)
++	 */
++	uint8_t item_size_lg;
++
++	/**
++	 * Number of bits in the key that make a symbol for a node.
++	 * (equals to log2 of the child count of the node)
++	 */
++	uint8_t node_key_bits;
++
++	/**
++	 * Number of bits in the key that make a symbol for the data block (leaf).
++	 * (equals to log2 of the value count stored in a data block)
++	 */
++	uint8_t data_block_key_bits;
++
++	/** The depth of the data block. Calculated from the values above */
++	uint8_t max_depth;
++};
++
++struct trie* trie_create(uint8_t key_size, uint8_t item_size_lg,
++			uint8_t node_key_bits, uint8_t data_block_key_bits,
++			uint64_t empty_value);
++
++bool trie_set(struct trie *t, uint64_t key, uint64_t val);
++uint64_t trie_get(struct trie *t, uint64_t key);
++
++typedef void (*trie_iterate_fn)(void *data, uint64_t key, uint64_t val);
++
++/**
++ * Calls trie_iterate_fn for each key-value pair where
++ * key is inside the [start, end] interval (inclusive).
++ *
++ * @param t        The trie.
++ * @param start    The start of the key interval (inclusive).
++ * @param end      The end of the key interval (inclusive).
++ * @param fn       The function to be called.
++ * @param fn_data  The value to be passed to fn.
++ */
++uint64_t trie_iterate_keys(struct trie *t, uint64_t start, uint64_t end,
++			    trie_iterate_fn fn, void *fn_data);
++
++void trie_free(struct trie *t);
++
++#endif /* !STRACE_TRIE_H */
+Index: strace-5.7/Makefile.in
+===================================================================
+--- strace-5.7.orig/Makefile.in	2020-09-09 15:50:13.484900519 +0200
++++ strace-5.7/Makefile.in	2020-09-09 15:54:59.569105143 +0200
+@@ -344,8 +344,8 @@
+ 	nlattr.c nlattr.h nsfs.c nsfs.h nsig.h numa.c number_set.c \
+ 	number_set.h oldstat.c open.c open_tree.c or1k_atomic.c \
+ 	pathtrace.c perf.c perf_event_struct.h perf_ioctl.c \
+-	personality.c pidfd_getfd.c pidfd_open.c pkeys.c poll.c \
+-	prctl.c print_aio_sigset.c print_dev_t.c print_fields.h \
++	personality.c pidfd_getfd.c pidfd_open.c pidns.c pkeys.c \
++	poll.c prctl.c print_aio_sigset.c print_dev_t.c print_fields.h \
+ 	print_group_req.c print_ifindex.c print_instruction_pointer.c \
+ 	print_kernel_version.c print_mac.c print_mq_attr.c \
+ 	print_msgbuf.c print_sg_req_info.c print_sigevent.c \
+@@ -369,10 +369,10 @@
+ 	string_to_uint.h swapon.c sync_file_range.c sync_file_range2.c \
+ 	syscall.c sysctl.c sysent.h sysent_shorthand_defs.h \
+ 	sysent_shorthand_undefs.h sysinfo.c syslog.c sysmips.c term.c \
+-	time.c times.c trace_event.h truncate.c ubi.c ucopy.c uid.c \
+-	uid16.c umask.c umount.c uname.c upeek.c upoke.c userfaultfd.c \
+-	ustat.c util.c utime.c utimes.c v4l2.c wait.c wait.h \
+-	watchdog_ioctl.c xattr.c xfs_quota_stat.h xgetdents.c \
++	time.c times.c trace_event.h trie.c trie.h truncate.c ubi.c \
++	ucopy.c uid.c uid16.c umask.c umount.c uname.c upeek.c upoke.c \
++	userfaultfd.c ustat.c util.c utime.c utimes.c v4l2.c wait.c \
++	wait.h watchdog_ioctl.c xattr.c xfs_quota_stat.h xgetdents.c \
+ 	xgetdents.h xlat.c xlat.h xmalloc.c xmalloc.h xstring.h \
+ 	types/cryptouser.h types/evdev.h types/io_uring.h \
+ 	types/openat2.h types/rtnl_link.h types/rtnl_mdb.h \
+@@ -487,8 +487,9 @@
+ 	libstrace_a-perf_ioctl.$(OBJEXT) \
+ 	libstrace_a-personality.$(OBJEXT) \
+ 	libstrace_a-pidfd_getfd.$(OBJEXT) \
+-	libstrace_a-pidfd_open.$(OBJEXT) libstrace_a-pkeys.$(OBJEXT) \
+-	libstrace_a-poll.$(OBJEXT) libstrace_a-prctl.$(OBJEXT) \
++	libstrace_a-pidfd_open.$(OBJEXT) libstrace_a-pidns.$(OBJEXT) \
++	libstrace_a-pkeys.$(OBJEXT) libstrace_a-poll.$(OBJEXT) \
++	libstrace_a-prctl.$(OBJEXT) \
+ 	libstrace_a-print_aio_sigset.$(OBJEXT) \
+ 	libstrace_a-print_dev_t.$(OBJEXT) \
+ 	libstrace_a-print_group_req.$(OBJEXT) \
+@@ -553,15 +554,15 @@
+ 	libstrace_a-sysinfo.$(OBJEXT) libstrace_a-syslog.$(OBJEXT) \
+ 	libstrace_a-sysmips.$(OBJEXT) libstrace_a-term.$(OBJEXT) \
+ 	libstrace_a-time.$(OBJEXT) libstrace_a-times.$(OBJEXT) \
+-	libstrace_a-truncate.$(OBJEXT) libstrace_a-ubi.$(OBJEXT) \
+-	libstrace_a-ucopy.$(OBJEXT) libstrace_a-uid.$(OBJEXT) \
+-	libstrace_a-uid16.$(OBJEXT) libstrace_a-umask.$(OBJEXT) \
+-	libstrace_a-umount.$(OBJEXT) libstrace_a-uname.$(OBJEXT) \
+-	libstrace_a-upeek.$(OBJEXT) libstrace_a-upoke.$(OBJEXT) \
+-	libstrace_a-userfaultfd.$(OBJEXT) libstrace_a-ustat.$(OBJEXT) \
+-	libstrace_a-util.$(OBJEXT) libstrace_a-utime.$(OBJEXT) \
+-	libstrace_a-utimes.$(OBJEXT) libstrace_a-v4l2.$(OBJEXT) \
+-	libstrace_a-wait.$(OBJEXT) \
++	libstrace_a-trie.$(OBJEXT) libstrace_a-truncate.$(OBJEXT) \
++	libstrace_a-ubi.$(OBJEXT) libstrace_a-ucopy.$(OBJEXT) \
++	libstrace_a-uid.$(OBJEXT) libstrace_a-uid16.$(OBJEXT) \
++	libstrace_a-umask.$(OBJEXT) libstrace_a-umount.$(OBJEXT) \
++	libstrace_a-uname.$(OBJEXT) libstrace_a-upeek.$(OBJEXT) \
++	libstrace_a-upoke.$(OBJEXT) libstrace_a-userfaultfd.$(OBJEXT) \
++	libstrace_a-ustat.$(OBJEXT) libstrace_a-util.$(OBJEXT) \
++	libstrace_a-utime.$(OBJEXT) libstrace_a-utimes.$(OBJEXT) \
++	libstrace_a-v4l2.$(OBJEXT) libstrace_a-wait.$(OBJEXT) \
+ 	libstrace_a-watchdog_ioctl.$(OBJEXT) \
+ 	libstrace_a-xattr.$(OBJEXT) libstrace_a-xgetdents.$(OBJEXT) \
+ 	libstrace_a-xlat.$(OBJEXT) libstrace_a-xmalloc.$(OBJEXT) \
+@@ -834,6 +835,7 @@
+ 	./$(DEPDIR)/libstrace_a-personality.Po \
+ 	./$(DEPDIR)/libstrace_a-pidfd_getfd.Po \
+ 	./$(DEPDIR)/libstrace_a-pidfd_open.Po \
++	./$(DEPDIR)/libstrace_a-pidns.Po \
+ 	./$(DEPDIR)/libstrace_a-pkeys.Po \
+ 	./$(DEPDIR)/libstrace_a-poll.Po \
+ 	./$(DEPDIR)/libstrace_a-prctl.Po \
+@@ -924,6 +926,7 @@
+ 	./$(DEPDIR)/libstrace_a-term.Po \
+ 	./$(DEPDIR)/libstrace_a-time.Po \
+ 	./$(DEPDIR)/libstrace_a-times.Po \
++	./$(DEPDIR)/libstrace_a-trie.Po \
+ 	./$(DEPDIR)/libstrace_a-truncate.Po \
+ 	./$(DEPDIR)/libstrace_a-ubi.Po \
+ 	./$(DEPDIR)/libstrace_a-ucopy.Po \
+@@ -1829,8 +1832,8 @@
+ 	nlattr.c nlattr.h nsfs.c nsfs.h nsig.h numa.c number_set.c \
+ 	number_set.h oldstat.c open.c open_tree.c or1k_atomic.c \
+ 	pathtrace.c perf.c perf_event_struct.h perf_ioctl.c \
+-	personality.c pidfd_getfd.c pidfd_open.c pkeys.c poll.c \
+-	prctl.c print_aio_sigset.c print_dev_t.c print_fields.h \
++	personality.c pidfd_getfd.c pidfd_open.c pidns.c pkeys.c \
++	poll.c prctl.c print_aio_sigset.c print_dev_t.c print_fields.h \
+ 	print_group_req.c print_ifindex.c print_instruction_pointer.c \
+ 	print_kernel_version.c print_mac.c print_mq_attr.c \
+ 	print_msgbuf.c print_sg_req_info.c print_sigevent.c \
+@@ -1854,10 +1857,10 @@
+ 	string_to_uint.h swapon.c sync_file_range.c sync_file_range2.c \
+ 	syscall.c sysctl.c sysent.h sysent_shorthand_defs.h \
+ 	sysent_shorthand_undefs.h sysinfo.c syslog.c sysmips.c term.c \
+-	time.c times.c trace_event.h truncate.c ubi.c ucopy.c uid.c \
+-	uid16.c umask.c umount.c uname.c upeek.c upoke.c userfaultfd.c \
+-	ustat.c util.c utime.c utimes.c v4l2.c wait.c wait.h \
+-	watchdog_ioctl.c xattr.c xfs_quota_stat.h xgetdents.c \
++	time.c times.c trace_event.h trie.c trie.h truncate.c ubi.c \
++	ucopy.c uid.c uid16.c umask.c umount.c uname.c upeek.c upoke.c \
++	userfaultfd.c ustat.c util.c utime.c utimes.c v4l2.c wait.c \
++	wait.h watchdog_ioctl.c xattr.c xfs_quota_stat.h xgetdents.c \
+ 	xgetdents.h xlat.c xlat.h xmalloc.c xmalloc.h xstring.h \
+ 	$(TYPES_HEADER_FILES) $(strace_SOURCES_check) $(am__append_1) \
+ 	$(am__append_2) $(am__append_7)
+@@ -2899,6 +2902,7 @@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-personality.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-pidfd_getfd.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-pidfd_open.Po@am__quote@ # am--include-marker
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-pidns.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-pkeys.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-poll.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-prctl.Po@am__quote@ # am--include-marker
+@@ -2989,6 +2993,7 @@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-term.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-time.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-times.Po@am__quote@ # am--include-marker
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-trie.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-truncate.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-ubi.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-ucopy.Po@am__quote@ # am--include-marker
+@@ -6015,6 +6020,20 @@
+ @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+ @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -c -o libstrace_a-pidfd_open.obj `if test -f 'pidfd_open.c'; then $(CYGPATH_W) 'pidfd_open.c'; else $(CYGPATH_W) '$(srcdir)/pidfd_open.c'; fi`
+ 
++libstrace_a-pidns.o: pidns.c
++@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -MT libstrace_a-pidns.o -MD -MP -MF $(DEPDIR)/libstrace_a-pidns.Tpo -c -o libstrace_a-pidns.o `test -f 'pidns.c' || echo '$(srcdir)/'`pidns.c
++@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libstrace_a-pidns.Tpo $(DEPDIR)/libstrace_a-pidns.Po
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='pidns.c' object='libstrace_a-pidns.o' libtool=no @AMDEPBACKSLASH@
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
++@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -c -o libstrace_a-pidns.o `test -f 'pidns.c' || echo '$(srcdir)/'`pidns.c
++
++libstrace_a-pidns.obj: pidns.c
++@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -MT libstrace_a-pidns.obj -MD -MP -MF $(DEPDIR)/libstrace_a-pidns.Tpo -c -o libstrace_a-pidns.obj `if test -f 'pidns.c'; then $(CYGPATH_W) 'pidns.c'; else $(CYGPATH_W) '$(srcdir)/pidns.c'; fi`
++@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libstrace_a-pidns.Tpo $(DEPDIR)/libstrace_a-pidns.Po
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='pidns.c' object='libstrace_a-pidns.obj' libtool=no @AMDEPBACKSLASH@
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
++@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -c -o libstrace_a-pidns.obj `if test -f 'pidns.c'; then $(CYGPATH_W) 'pidns.c'; else $(CYGPATH_W) '$(srcdir)/pidns.c'; fi`
++
+ libstrace_a-pkeys.o: pkeys.c
+ @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -MT libstrace_a-pkeys.o -MD -MP -MF $(DEPDIR)/libstrace_a-pkeys.Tpo -c -o libstrace_a-pkeys.o `test -f 'pkeys.c' || echo '$(srcdir)/'`pkeys.c
+ @am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libstrace_a-pkeys.Tpo $(DEPDIR)/libstrace_a-pkeys.Po
+@@ -7275,6 +7294,20 @@
+ @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+ @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -c -o libstrace_a-times.obj `if test -f 'times.c'; then $(CYGPATH_W) 'times.c'; else $(CYGPATH_W) '$(srcdir)/times.c'; fi`
+ 
++libstrace_a-trie.o: trie.c
++@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -MT libstrace_a-trie.o -MD -MP -MF $(DEPDIR)/libstrace_a-trie.Tpo -c -o libstrace_a-trie.o `test -f 'trie.c' || echo '$(srcdir)/'`trie.c
++@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libstrace_a-trie.Tpo $(DEPDIR)/libstrace_a-trie.Po
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='trie.c' object='libstrace_a-trie.o' libtool=no @AMDEPBACKSLASH@
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
++@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -c -o libstrace_a-trie.o `test -f 'trie.c' || echo '$(srcdir)/'`trie.c
++
++libstrace_a-trie.obj: trie.c
++@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -MT libstrace_a-trie.obj -MD -MP -MF $(DEPDIR)/libstrace_a-trie.Tpo -c -o libstrace_a-trie.obj `if test -f 'trie.c'; then $(CYGPATH_W) 'trie.c'; else $(CYGPATH_W) '$(srcdir)/trie.c'; fi`
++@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libstrace_a-trie.Tpo $(DEPDIR)/libstrace_a-trie.Po
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='trie.c' object='libstrace_a-trie.obj' libtool=no @AMDEPBACKSLASH@
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
++@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -c -o libstrace_a-trie.obj `if test -f 'trie.c'; then $(CYGPATH_W) 'trie.c'; else $(CYGPATH_W) '$(srcdir)/trie.c'; fi`
++
+ libstrace_a-truncate.o: truncate.c
+ @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -MT libstrace_a-truncate.o -MD -MP -MF $(DEPDIR)/libstrace_a-truncate.Tpo -c -o libstrace_a-truncate.o `test -f 'truncate.c' || echo '$(srcdir)/'`truncate.c
+ @am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libstrace_a-truncate.Tpo $(DEPDIR)/libstrace_a-truncate.Po
+@@ -8411,6 +8444,7 @@
+ 	-rm -f ./$(DEPDIR)/libstrace_a-personality.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-pidfd_getfd.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-pidfd_open.Po
++	-rm -f ./$(DEPDIR)/libstrace_a-pidns.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-pkeys.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-poll.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-prctl.Po
+@@ -8501,6 +8535,7 @@
+ 	-rm -f ./$(DEPDIR)/libstrace_a-term.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-time.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-times.Po
++	-rm -f ./$(DEPDIR)/libstrace_a-trie.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-truncate.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-ubi.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-ucopy.Po
+@@ -8796,6 +8831,7 @@
+ 	-rm -f ./$(DEPDIR)/libstrace_a-personality.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-pidfd_getfd.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-pidfd_open.Po
++	-rm -f ./$(DEPDIR)/libstrace_a-pidns.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-pkeys.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-poll.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-prctl.Po
+@@ -8886,6 +8922,7 @@
+ 	-rm -f ./$(DEPDIR)/libstrace_a-term.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-time.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-times.Po
++	-rm -f ./$(DEPDIR)/libstrace_a-trie.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-truncate.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-ubi.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-ucopy.Po

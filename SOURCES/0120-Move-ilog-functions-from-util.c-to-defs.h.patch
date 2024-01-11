@@ -1,0 +1,157 @@
+From c9e41cd3485fa1a65dc6206c5b210b4be4c5597c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=81kos=20Uzonyi?= <uzonyi.akos@gmail.com>
+Date: Sat, 13 Jun 2020 18:18:32 +0200
+Subject: [PATCH 120/138] Move ilog* functions from util.c to defs.h
+
+* util.c (ILOG2_ITER_, ilog2_klong, ilog2_64, ilog2_32): Move ...
+* defs.h: ... here.
+---
+ defs.h | 60 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ util.c | 62 --------------------------------------------------------------
+ 2 files changed, 60 insertions(+), 62 deletions(-)
+
+diff --git a/defs.h b/defs.h
+index 3aa07fb..d8bd513 100644
+--- a/defs.h
++++ b/defs.h
+@@ -1698,4 +1698,64 @@ scno_is_valid(kernel_ulong_t scno)
+ 
+ # define SYS_FUNC(syscall_name) int SYS_FUNC_NAME(sys_ ## syscall_name)(struct tcb *tcp)
+ 
++#define ILOG2_ITER_(val_, ret_, bit_)					\
++	do {								\
++		typeof(ret_) shift_ =					\
++			((val_) > ((((typeof(val_)) 1)			\
++				   << (1 << (bit_))) - 1)) << (bit_);	\
++		(val_) >>= shift_;					\
++		(ret_) |= shift_;					\
++	} while (0)
++
++/**
++ * Calculate floor(log2(val)), with the exception of val == 0, for which 0
++ * is returned as well.
++ *
++ * @param val 64-bit value to calculate integer base-2 logarithm for.
++ * @return    (unsigned int) floor(log2(val)) if val > 0, 0 if val == 0.
++ */
++static inline unsigned int
++ilog2_64(uint64_t val)
++{
++	unsigned int ret = 0;
++
++	ILOG2_ITER_(val, ret, 5);
++	ILOG2_ITER_(val, ret, 4);
++	ILOG2_ITER_(val, ret, 3);
++	ILOG2_ITER_(val, ret, 2);
++	ILOG2_ITER_(val, ret, 1);
++	ILOG2_ITER_(val, ret, 0);
++
++	return ret;
++}
++
++/**
++ * Calculate floor(log2(val)), with the exception of val == 0, for which 0
++ * is returned as well.
++ *
++ * @param val 32-bit value to calculate integer base-2 logarithm for.
++ * @return    (unsigned int) floor(log2(val)) if val > 0, 0 if val == 0.
++ */
++static inline unsigned int
++ilog2_32(uint32_t val)
++{
++	unsigned int ret = 0;
++
++	ILOG2_ITER_(val, ret, 4);
++	ILOG2_ITER_(val, ret, 3);
++	ILOG2_ITER_(val, ret, 2);
++	ILOG2_ITER_(val, ret, 1);
++	ILOG2_ITER_(val, ret, 0);
++
++	return ret;
++}
++
++#if SIZEOF_KERNEL_LONG_T > 4
++# define ilog2_klong ilog2_64
++#else
++# define ilog2_klong ilog2_32
++#endif
++
++#undef ILOG2_ITER_
++
+ #endif /* !STRACE_DEFS_H */
+diff --git a/util.c b/util.c
+index 59696b5..cde76c1 100644
+--- a/util.c
++++ b/util.c
+@@ -1120,68 +1120,6 @@ dumpiov_upto(struct tcb *const tcp, const int len, const kernel_ulong_t addr,
+ #undef iov
+ }
+ 
+-#define ILOG2_ITER_(val_, ret_, bit_)					\
+-	do {								\
+-		typeof(ret_) shift_ =					\
+-			((val_) > ((((typeof(val_)) 1)			\
+-				   << (1 << (bit_))) - 1)) << (bit_);	\
+-		(val_) >>= shift_;					\
+-		(ret_) |= shift_;					\
+-	} while (0)
+-
+-#if SIZEOF_KERNEL_LONG_T > 4
+-
+-# define ilog2_klong ilog2_64
+-/**
+- * Calculate floor(log2(val)), with the exception of val == 0, for which 0
+- * is returned as well.
+- *
+- * @param val 64-bit value to calculate integer base-2 logarithm for.
+- * @return    (unsigned int) floor(log2(val)) if val > 0, 0 if val == 0.
+- */
+-static inline unsigned int
+-ilog2_64(uint64_t val)
+-{
+-	unsigned int ret = 0;
+-
+-	ILOG2_ITER_(val, ret, 5);
+-	ILOG2_ITER_(val, ret, 4);
+-	ILOG2_ITER_(val, ret, 3);
+-	ILOG2_ITER_(val, ret, 2);
+-	ILOG2_ITER_(val, ret, 1);
+-	ILOG2_ITER_(val, ret, 0);
+-
+-	return ret;
+-}
+-
+-#else /* SIZEOF_KERNEL_LONG_T == 4 */
+-
+-# define ilog2_klong ilog2_32
+-/**
+- * Calculate floor(log2(val)), with the exception of val == 0, for which 0
+- * is returned as well.
+- *
+- * @param val 32-bit value to calculate integer base-2 logarithm for.
+- * @return    (unsigned int) floor(log2(val)) if val > 0, 0 if val == 0.
+- */
+-static inline unsigned int
+-ilog2_32(uint32_t val)
+-{
+-	unsigned int ret = 0;
+-
+-	ILOG2_ITER_(val, ret, 4);
+-	ILOG2_ITER_(val, ret, 3);
+-	ILOG2_ITER_(val, ret, 2);
+-	ILOG2_ITER_(val, ret, 1);
+-	ILOG2_ITER_(val, ret, 0);
+-
+-	return ret;
+-}
+-
+-#endif /* SIZEOF_KERNEL_LONG_T */
+-
+-#undef ILOG2_ITER_
+-
+ void
+ dumpstr(struct tcb *const tcp, const kernel_ulong_t addr,
+ 	const kernel_ulong_t len)
+-- 
+2.1.4
+

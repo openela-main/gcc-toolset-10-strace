@@ -1,0 +1,28 @@
+From 86923d3a0a01c520ea25d22587143ad6b8dab18b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=81kos=20Uzonyi?= <uzonyi.akos@gmail.com>
+Date: Sat, 13 Jun 2020 18:18:28 +0200
+Subject: [PATCH 124/138] kcmp: fix KCMP_FILE decoding
+
+* kcmp.c (SYS_FUNC(kcmp)): Fix KCMP_FILE pid arguments.
+
+Fixes: v4.20~66 ("kcmp: output fds using a separate function")
+---
+ kcmp.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kcmp.c b/kcmp.c
+index 6819265..6211555 100644
+--- a/kcmp.c
++++ b/kcmp.c
+@@ -38,7 +38,7 @@ SYS_FUNC(kcmp)
+ 			tprints(", ");
+ 			printfd_pid_tracee_ns(tcp, pid1, idx1);
+ 			tprints(", ");
+-			printfd_pid_tracee_ns(tcp, pid1, idx2);
++			printfd_pid_tracee_ns(tcp, pid2, idx2);
+ 
+ 			break;
+ 
+-- 
+2.1.4
+

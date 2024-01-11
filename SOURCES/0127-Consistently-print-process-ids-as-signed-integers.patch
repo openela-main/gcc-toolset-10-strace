@@ -1,0 +1,525 @@
+From edf6f95bd19f5ce7ac0ef62f923cd17fb6052f51 Mon Sep 17 00:00:00 2001
+From: "Dmitry V. Levin" <ldv@altlinux.org>
+Date: Sat, 18 Jul 2020 08:00:00 +0000
+Subject: [PATCH 127/138] Consistently print process ids as signed integers
+
+* block.c (block_ioctl): Print struct_blk_user_trace_setup.pid using
+PRINT_FIELD_D instead of PRINT_FIELD_U.
+* bpf.c (BPF_TASK_FD_QUERY): Print task_fd_query.pid using PRINT_FIELD_D
+instead of PRINT_FIELD_U.
+* ipc_msgctl.c (print_msqid_ds): Print msqid_ds.msg_lspid
+and msqid_ds.msg_lrpid using PRINT_FIELD_D.
+* ipc_shmctl.c (print_shmid_ds): Print shmid_ds.shm_cpid and shm_lpid
+using PRINT_FIELD_D.
+* msghdr.c (print_scm_creds): Print ucred.pid using PRINT_FIELD_D
+instead of PRINT_FIELD_U.
+* netlink.c (print_nlmsghdr): Print nlmsghdr.nlmsg_pid using %d format
+instead of %u.
+* tests/bpf.c (BPF_TASK_FD_QUERY_checks): Update expected output.
+* tests/ioctl_block.c (main): Update expected output.
+* tests/ipc_msg.c (main): Likewise.
+* tests/ipc_shm.c (main): Likewise.
+* tests/net-yy-netlink.c (main): Likewise.
+* tests/netlink_protocol.c (test_nlmsgerr): Likewise.
+---
+ block.c                  | 2 +-
+ bpf.c                    | 2 +-
+ ipc_msgctl.c             | 4 ++--
+ ipc_shmctl.c             | 4 ++--
+ msghdr.c                 | 2 +-
+ netlink.c                | 2 +-
+ tests/bpf.c              | 8 ++++----
+ tests/ioctl_block.c      | 2 +-
+ tests/ipc_msg.c          | 6 +++---
+ tests/ipc_shm.c          | 8 ++++----
+ tests/net-yy-netlink.c   | 4 ++--
+ tests/netlink_protocol.c | 4 ++--
+ 12 files changed, 24 insertions(+), 24 deletions(-)
+
+Index: strace-5.7/block.c
+===================================================================
+--- strace-5.7.orig/block.c	2020-09-09 14:50:43.878739225 +0200
++++ strace-5.7/block.c	2020-09-09 14:59:14.715043707 +0200
+@@ -179,7 +179,7 @@
+ 			PRINT_FIELD_U(", ", buts, buf_nr);
+ 			PRINT_FIELD_U(", ", buts, start_lba);
+ 			PRINT_FIELD_U(", ", buts, end_lba);
+-			PRINT_FIELD_U(", ", buts, pid);
++			PRINT_FIELD_D(", ", buts, pid);
+ 			return 0;
+ 		} else {
+ 			struct_blk_user_trace_setup buts;
+Index: strace-5.7/bpf.c
+===================================================================
+--- strace-5.7.orig/bpf.c	2020-09-09 14:50:43.878739225 +0200
++++ strace-5.7/bpf.c	2020-09-09 14:59:14.715043707 +0200
+@@ -927,7 +927,7 @@
+ 	if (entering(tcp)) {
+ 		set_tcb_priv_ulong(tcp, attr.buf_len);
+ 
+-		PRINT_FIELD_U("{task_fd_query={", attr, pid);
++		PRINT_FIELD_D("{task_fd_query={", attr, pid);
+ 		PRINT_FIELD_FD(", ", attr, fd, tcp);
+ 		PRINT_FIELD_U(", ", attr, flags);
+ 		PRINT_FIELD_U(", ", attr, buf_len);
+Index: strace-5.7/ipc_msgctl.c
+===================================================================
+--- strace-5.7.orig/ipc_msgctl.c	2020-09-09 14:59:12.909042630 +0200
++++ strace-5.7/ipc_msgctl.c	2020-09-09 14:59:14.715043707 +0200
+@@ -58,8 +58,8 @@
+ 		tprintf(", msg_ctime=%u", (unsigned) msqid_ds.msg_ctime);
+ 		tprintf(", msg_qnum=%u", (unsigned) msqid_ds.msg_qnum);
+ 		tprintf(", msg_qbytes=%u", (unsigned) msqid_ds.msg_qbytes);
+-		tprintf(", msg_lspid=%u", (unsigned) msqid_ds.msg_lspid);
+-		tprintf(", msg_lrpid=%u", (unsigned) msqid_ds.msg_lrpid);
++		PRINT_FIELD_D(", ", msqid_ds, msg_lspid);
++		PRINT_FIELD_D(", ", msqid_ds, msg_lrpid);
+ 		tprints("}");
+ 		break;
+ 
+Index: strace-5.7/ipc_shmctl.c
+===================================================================
+--- strace-5.7.orig/ipc_shmctl.c	2020-09-09 14:59:12.909042630 +0200
++++ strace-5.7/ipc_shmctl.c	2020-09-09 14:59:14.716043707 +0200
+@@ -54,8 +54,8 @@
+ 		PRINT_FIELD_UID(", ", shmid_ds.shm_perm, cgid);
+ 		tprints("}");
+ 		tprintf(", shm_segsz=%u", (unsigned) shmid_ds.shm_segsz);
+-		tprintf(", shm_cpid=%u", (unsigned) shmid_ds.shm_cpid);
+-		tprintf(", shm_lpid=%u", (unsigned) shmid_ds.shm_lpid);
++		PRINT_FIELD_D(", ", shmid_ds, shm_cpid);
++		PRINT_FIELD_D(", ", shmid_ds, shm_lpid);
+ 		tprintf(", shm_nattch=%u", (unsigned) shmid_ds.shm_nattch);
+ 		tprintf(", shm_atime=%u", (unsigned) shmid_ds.shm_atime);
+ 		tprintf(", shm_dtime=%u", (unsigned) shmid_ds.shm_dtime);
+Index: strace-5.7/msghdr.c
+===================================================================
+--- strace-5.7.orig/msghdr.c	2020-09-09 14:50:43.878739225 +0200
++++ strace-5.7/msghdr.c	2020-09-09 14:59:14.717043708 +0200
+@@ -69,7 +69,7 @@
+ {
+ 	const struct ucred *uc = cmsg_data;
+ 
+-	PRINT_FIELD_U("{", *uc, pid);
++	PRINT_FIELD_D("{", *uc, pid);
+ 	PRINT_FIELD_UID(", ", *uc, uid);
+ 	PRINT_FIELD_UID(", ", *uc, gid);
+ 	tprints("}");
+Index: strace-5.7/netlink.c
+===================================================================
+--- strace-5.7.orig/netlink.c	2020-09-09 14:50:43.878739225 +0200
++++ strace-5.7/netlink.c	2020-09-09 14:59:14.717043708 +0200
+@@ -446,7 +446,7 @@
+ 	decode_nlmsg_flags(nlmsghdr->nlmsg_flags,
+ 			   nlmsghdr->nlmsg_type, family);
+ 
+-	tprintf(", seq=%u, pid=%u}", nlmsghdr->nlmsg_seq,
++	tprintf(", seq=%u, pid=%d}", nlmsghdr->nlmsg_seq,
+ 		nlmsghdr->nlmsg_pid);
+ }
+ 
+Index: strace-5.7/tests/bpf.c
+===================================================================
+--- strace-5.7.orig/tests/bpf.c	2020-09-09 14:50:43.878739225 +0200
++++ strace-5.7/tests/bpf.c	2020-09-09 14:59:14.717043708 +0200
+@@ -1289,16 +1289,16 @@
+ 
+ static const struct bpf_attr_check BPF_TASK_FD_QUERY_checks[] = {
+ 	{
+-		.data = { .BPF_TASK_FD_QUERY_data = { .pid = 0xdeadbeef } },
++		.data = { .BPF_TASK_FD_QUERY_data = { .pid = 1735928559 } },
+ 		.size = offsetofend(struct BPF_TASK_FD_QUERY_struct, pid),
+-		.str = "task_fd_query={pid=3735928559, fd=0" FD0_PATH
++		.str = "task_fd_query={pid=1735928559, fd=0" FD0_PATH
+ 		       ", flags=0, buf_len=0, buf=NULL, prog_id=0"
+ 		       ", fd_type=BPF_FD_TYPE_RAW_TRACEPOINT"
+ 		       ", probe_offset=0, probe_addr=0}"
+ 	},
+ 	{ /* 1 */
+ 		.data = { .BPF_TASK_FD_QUERY_data = {
+-			.pid = 0xcafef00d,
++			.pid = 1405705229,
+ 			.fd = 0xdeadbeef,
+ 			.flags = 0xfacefeed,
+ 			.buf_len = 0xdefaced,
+@@ -1309,7 +1309,7 @@
+ 			.probe_addr = 0xfac5fed5fac7fed8
+ 		} },
+ 		.size = offsetofend(struct BPF_TASK_FD_QUERY_struct, probe_addr),
+-		.str = "task_fd_query={pid=3405705229"
++		.str = "task_fd_query={pid=1405705229"
+ 		       ", fd=-559038737"
+ 		       ", flags=4207869677"
+ 		       ", buf_len=233811181"
+Index: strace-5.7/tests/ioctl_block.c
+===================================================================
+--- strace-5.7.orig/tests/ioctl_block.c	2020-09-09 14:50:43.878739225 +0200
++++ strace-5.7/tests/ioctl_block.c	2020-09-09 14:59:14.717043708 +0200
+@@ -165,7 +165,7 @@
+ 
+ 	ioctl(-1, BLKTRACESETUP, buts);
+ 	printf("ioctl(-1, BLKTRACESETUP, {act_mask=%hu, buf_size=%u, buf_nr=%u"
+-	       ", start_lba=%" PRI__u64 ", end_lba=%" PRI__u64 ", pid=%u})"
++	       ", start_lba=%" PRI__u64 ", end_lba=%" PRI__u64 ", pid=%d})"
+ 	       " = -1 EBADF (%m)\n",
+ 	       buts->act_mask, buts->buf_size, buts->buf_nr,
+ 	       buts->start_lba, buts->end_lba, buts->pid);
+Index: strace-5.7/tests/ipc_msg.c
+===================================================================
+--- strace-5.7.orig/tests/ipc_msg.c	2020-09-09 14:50:43.878739225 +0200
++++ strace-5.7/tests/ipc_msg.c	2020-09-09 14:59:14.717043708 +0200
+@@ -128,15 +128,15 @@
+ 	printf("msgctl\\(%d, (%s\\|)?%s, \\{msg_perm=\\{uid=%u"
+ 	       ", gid=%u, mode=%#o, key=%u, cuid=%u, cgid=%u\\}, msg_stime=%u"
+ 	       ", msg_rtime=%u, msg_ctime=%u, msg_qnum=%u, msg_qbytes=%u"
+-	       ", msg_lspid=%u, msg_lrpid=%u\\}\\) = 0\n",
++	       ", msg_lspid=%d, msg_lrpid=%d\\}\\) = 0\n",
+ 	       id, str_ipc_64, str_ipc_stat,
+ 	       (unsigned) ds.msg_perm.uid, (unsigned) ds.msg_perm.gid,
+ 	       (unsigned) ds.msg_perm.mode, (unsigned) ds.msg_perm.__key,
+ 	       (unsigned) ds.msg_perm.cuid, (unsigned) ds.msg_perm.cgid,
+ 	       (unsigned) ds.msg_stime, (unsigned) ds.msg_rtime,
+ 	       (unsigned) ds.msg_ctime, (unsigned) ds.msg_qnum,
+-	       (unsigned) ds.msg_qbytes, (unsigned) ds.msg_lspid,
+-	       (unsigned) ds.msg_lrpid);
++	       (unsigned) ds.msg_qbytes, (int) ds.msg_lspid,
++	       (int) ds.msg_lrpid);
+ 
+ 	if (msgctl(id, IPC_SET, &ds))
+ 		perror_msg_and_skip("msgctl IPC_SET");
+Index: strace-5.7/tests/ipc_shm.c
+===================================================================
+--- strace-5.7.orig/tests/ipc_shm.c	2020-09-09 14:50:43.878739225 +0200
++++ strace-5.7/tests/ipc_shm.c	2020-09-09 14:59:14.718043708 +0200
+@@ -168,15 +168,15 @@
+ 	if (shmctl(id, IPC_STAT, &ds))
+ 		perror_msg_and_skip("shmctl IPC_STAT");
+ 	printf("shmctl\\(%d, (%s\\|)?%s, \\{shm_perm=\\{uid=%u, gid=%u, "
+-		"mode=%#o, key=%u, cuid=%u, cgid=%u\\}, shm_segsz=%u, shm_cpid=%u, "
+-		"shm_lpid=%u, shm_nattch=%u, shm_atime=%u, shm_dtime=%u, "
++		"mode=%#o, key=%u, cuid=%u, cgid=%u\\}, shm_segsz=%u, shm_cpid=%d, "
++		"shm_lpid=%d, shm_nattch=%u, shm_atime=%u, shm_dtime=%u, "
+ 		"shm_ctime=%u\\}\\) = 0\n",
+ 		id, str_ipc_64, str_ipc_stat,
+ 		(unsigned) ds.shm_perm.uid, (unsigned) ds.shm_perm.gid,
+ 		(unsigned) ds.shm_perm.mode, (unsigned) ds.shm_perm.__key,
+ 		(unsigned) ds.shm_perm.cuid, (unsigned) ds.shm_perm.cgid,
+-		(unsigned) ds.shm_segsz, (unsigned) ds.shm_cpid,
+-		(unsigned) ds.shm_lpid, (unsigned) ds.shm_nattch,
++		(unsigned) ds.shm_segsz, (int) ds.shm_cpid,
++		(int) ds.shm_lpid, (unsigned) ds.shm_nattch,
+ 		(unsigned) ds.shm_atime, (unsigned) ds.shm_dtime,
+ 		(unsigned) ds. shm_ctime);
+ 
+Index: strace-5.7/tests/net-yy-netlink.c
+===================================================================
+--- strace-5.7.orig/tests/net-yy-netlink.c	2020-09-09 14:50:43.878739225 +0200
++++ strace-5.7/tests/net-yy-netlink.c	2020-09-09 14:59:14.718043708 +0200
+@@ -67,13 +67,13 @@
+ 	if (bind(fd, sa, *len))
+ 		perror_msg_and_skip("bind");
+ 	printf("bind(%d" FMT_UNBOUND ", {sa_family=AF_NETLINK"
+-	       ", nl_pid=%u, nl_groups=00000000}, %u) = 0\n",
++	       ", nl_pid=%d, nl_groups=00000000}, %u) = 0\n",
+ 	       fd, ARG_UNBOUND, addr.nl_pid, (unsigned) *len);
+ 
+ 	if (getsockname(fd, sa, len))
+ 		perror_msg_and_fail("getsockname");
+ 	printf("getsockname(%d" FMT_BOUND ", {sa_family=AF_NETLINK"
+-	       ", nl_pid=%u, nl_groups=00000000}, [%u]) = 0\n",
++	       ", nl_pid=%d, nl_groups=00000000}, [%u]) = 0\n",
+ 	       fd, ARG_BOUND, addr.nl_pid, (unsigned) *len);
+ 
+ 	if (close(fd))
+Index: strace-5.7/tests/netlink_protocol.c
+===================================================================
+--- strace-5.7.orig/tests/netlink_protocol.c	2020-09-09 14:50:43.878739225 +0200
++++ strace-5.7/tests/netlink_protocol.c	2020-09-09 14:59:14.718043708 +0200
+@@ -264,7 +264,7 @@
+ 	printf("sendto(%d, {{len=%u, type=NLMSG_ERROR, flags=NLM_F_REQUEST"
+ 	       ", seq=0, pid=0}, {error=-EACCES"
+ 	       ", msg={len=%u, type=NLMSG_NOOP, flags=NLM_F_REQUEST|0x%x"
+-	       ", seq=%u, pid=%u}}}, %u, MSG_DONTWAIT, NULL, 0) = %s\n",
++	       ", seq=%u, pid=%d}}}, %u, MSG_DONTWAIT, NULL, 0) = %s\n",
+ 	       fd, nlh->nlmsg_len, err->msg.nlmsg_len, NLM_F_DUMP,
+ 	       err->msg.nlmsg_seq, err->msg.nlmsg_pid,
+ 	       nlh->nlmsg_len, sprintrc(rc));
+@@ -289,7 +289,7 @@
+ 	printf("sendto(%d, {{len=%u, type=NLMSG_ERROR, flags=NLM_F_REQUEST"
+ 	       ", seq=0, pid=0}, {error=-EACCES"
+ 	       ", msg={{len=%u, type=NLMSG_NOOP, flags=NLM_F_REQUEST|0x%x"
+-	       ", seq=%u, pid=%u}, \"\\x61\\x62\\x63\\x64\"}}}"
++	       ", seq=%u, pid=%d}, \"\\x61\\x62\\x63\\x64\"}}}"
+ 	       ", %u, MSG_DONTWAIT, NULL, 0) = %s\n",
+ 	       fd, nlh->nlmsg_len, err->msg.nlmsg_len, NLM_F_DUMP,
+ 	       err->msg.nlmsg_seq, err->msg.nlmsg_pid,
+Index: strace-5.7/tests-m32/bpf.c
+===================================================================
+--- strace-5.7.orig/tests-m32/bpf.c	2020-04-18 15:47:17.000000000 +0200
++++ strace-5.7/tests-m32/bpf.c	2020-09-09 14:59:52.229066067 +0200
+@@ -1289,16 +1289,16 @@
+ 
+ static const struct bpf_attr_check BPF_TASK_FD_QUERY_checks[] = {
+ 	{
+-		.data = { .BPF_TASK_FD_QUERY_data = { .pid = 0xdeadbeef } },
++		.data = { .BPF_TASK_FD_QUERY_data = { .pid = 1735928559 } },
+ 		.size = offsetofend(struct BPF_TASK_FD_QUERY_struct, pid),
+-		.str = "task_fd_query={pid=3735928559, fd=0" FD0_PATH
++		.str = "task_fd_query={pid=1735928559, fd=0" FD0_PATH
+ 		       ", flags=0, buf_len=0, buf=NULL, prog_id=0"
+ 		       ", fd_type=BPF_FD_TYPE_RAW_TRACEPOINT"
+ 		       ", probe_offset=0, probe_addr=0}"
+ 	},
+ 	{ /* 1 */
+ 		.data = { .BPF_TASK_FD_QUERY_data = {
+-			.pid = 0xcafef00d,
++			.pid = 1405705229,
+ 			.fd = 0xdeadbeef,
+ 			.flags = 0xfacefeed,
+ 			.buf_len = 0xdefaced,
+@@ -1309,7 +1309,7 @@
+ 			.probe_addr = 0xfac5fed5fac7fed8
+ 		} },
+ 		.size = offsetofend(struct BPF_TASK_FD_QUERY_struct, probe_addr),
+-		.str = "task_fd_query={pid=3405705229"
++		.str = "task_fd_query={pid=1405705229"
+ 		       ", fd=-559038737"
+ 		       ", flags=4207869677"
+ 		       ", buf_len=233811181"
+Index: strace-5.7/tests-m32/ioctl_block.c
+===================================================================
+--- strace-5.7.orig/tests-m32/ioctl_block.c	2019-07-24 19:12:18.000000000 +0200
++++ strace-5.7/tests-m32/ioctl_block.c	2020-09-09 14:59:52.290066103 +0200
+@@ -165,7 +165,7 @@
+ 
+ 	ioctl(-1, BLKTRACESETUP, buts);
+ 	printf("ioctl(-1, BLKTRACESETUP, {act_mask=%hu, buf_size=%u, buf_nr=%u"
+-	       ", start_lba=%" PRI__u64 ", end_lba=%" PRI__u64 ", pid=%u})"
++	       ", start_lba=%" PRI__u64 ", end_lba=%" PRI__u64 ", pid=%d})"
+ 	       " = -1 EBADF (%m)\n",
+ 	       buts->act_mask, buts->buf_size, buts->buf_nr,
+ 	       buts->start_lba, buts->end_lba, buts->pid);
+Index: strace-5.7/tests-m32/ipc_msg.c
+===================================================================
+--- strace-5.7.orig/tests-m32/ipc_msg.c	2019-09-25 03:02:03.000000000 +0200
++++ strace-5.7/tests-m32/ipc_msg.c	2020-09-09 14:59:52.349066138 +0200
+@@ -128,15 +128,15 @@
+ 	printf("msgctl\\(%d, (%s\\|)?%s, \\{msg_perm=\\{uid=%u"
+ 	       ", gid=%u, mode=%#o, key=%u, cuid=%u, cgid=%u\\}, msg_stime=%u"
+ 	       ", msg_rtime=%u, msg_ctime=%u, msg_qnum=%u, msg_qbytes=%u"
+-	       ", msg_lspid=%u, msg_lrpid=%u\\}\\) = 0\n",
++	       ", msg_lspid=%d, msg_lrpid=%d\\}\\) = 0\n",
+ 	       id, str_ipc_64, str_ipc_stat,
+ 	       (unsigned) ds.msg_perm.uid, (unsigned) ds.msg_perm.gid,
+ 	       (unsigned) ds.msg_perm.mode, (unsigned) ds.msg_perm.__key,
+ 	       (unsigned) ds.msg_perm.cuid, (unsigned) ds.msg_perm.cgid,
+ 	       (unsigned) ds.msg_stime, (unsigned) ds.msg_rtime,
+ 	       (unsigned) ds.msg_ctime, (unsigned) ds.msg_qnum,
+-	       (unsigned) ds.msg_qbytes, (unsigned) ds.msg_lspid,
+-	       (unsigned) ds.msg_lrpid);
++	       (unsigned) ds.msg_qbytes, (int) ds.msg_lspid,
++	       (int) ds.msg_lrpid);
+ 
+ 	if (msgctl(id, IPC_SET, &ds))
+ 		perror_msg_and_skip("msgctl IPC_SET");
+Index: strace-5.7/tests-m32/ipc_shm.c
+===================================================================
+--- strace-5.7.orig/tests-m32/ipc_shm.c	2019-11-28 20:30:05.000000000 +0100
++++ strace-5.7/tests-m32/ipc_shm.c	2020-09-09 14:59:52.406066172 +0200
+@@ -168,15 +168,15 @@
+ 	if (shmctl(id, IPC_STAT, &ds))
+ 		perror_msg_and_skip("shmctl IPC_STAT");
+ 	printf("shmctl\\(%d, (%s\\|)?%s, \\{shm_perm=\\{uid=%u, gid=%u, "
+-		"mode=%#o, key=%u, cuid=%u, cgid=%u\\}, shm_segsz=%u, shm_cpid=%u, "
+-		"shm_lpid=%u, shm_nattch=%u, shm_atime=%u, shm_dtime=%u, "
++		"mode=%#o, key=%u, cuid=%u, cgid=%u\\}, shm_segsz=%u, shm_cpid=%d, "
++		"shm_lpid=%d, shm_nattch=%u, shm_atime=%u, shm_dtime=%u, "
+ 		"shm_ctime=%u\\}\\) = 0\n",
+ 		id, str_ipc_64, str_ipc_stat,
+ 		(unsigned) ds.shm_perm.uid, (unsigned) ds.shm_perm.gid,
+ 		(unsigned) ds.shm_perm.mode, (unsigned) ds.shm_perm.__key,
+ 		(unsigned) ds.shm_perm.cuid, (unsigned) ds.shm_perm.cgid,
+-		(unsigned) ds.shm_segsz, (unsigned) ds.shm_cpid,
+-		(unsigned) ds.shm_lpid, (unsigned) ds.shm_nattch,
++		(unsigned) ds.shm_segsz, (int) ds.shm_cpid,
++		(int) ds.shm_lpid, (unsigned) ds.shm_nattch,
+ 		(unsigned) ds.shm_atime, (unsigned) ds.shm_dtime,
+ 		(unsigned) ds. shm_ctime);
+ 
+Index: strace-5.7/tests-m32/net-yy-netlink.c
+===================================================================
+--- strace-5.7.orig/tests-m32/net-yy-netlink.c	2020-04-04 00:58:26.000000000 +0200
++++ strace-5.7/tests-m32/net-yy-netlink.c	2020-09-09 14:59:52.464066207 +0200
+@@ -67,13 +67,13 @@
+ 	if (bind(fd, sa, *len))
+ 		perror_msg_and_skip("bind");
+ 	printf("bind(%d" FMT_UNBOUND ", {sa_family=AF_NETLINK"
+-	       ", nl_pid=%u, nl_groups=00000000}, %u) = 0\n",
++	       ", nl_pid=%d, nl_groups=00000000}, %u) = 0\n",
+ 	       fd, ARG_UNBOUND, addr.nl_pid, (unsigned) *len);
+ 
+ 	if (getsockname(fd, sa, len))
+ 		perror_msg_and_fail("getsockname");
+ 	printf("getsockname(%d" FMT_BOUND ", {sa_family=AF_NETLINK"
+-	       ", nl_pid=%u, nl_groups=00000000}, [%u]) = 0\n",
++	       ", nl_pid=%d, nl_groups=00000000}, [%u]) = 0\n",
+ 	       fd, ARG_BOUND, addr.nl_pid, (unsigned) *len);
+ 
+ 	if (close(fd))
+Index: strace-5.7/tests-m32/netlink_protocol.c
+===================================================================
+--- strace-5.7.orig/tests-m32/netlink_protocol.c	2018-12-30 16:35:21.000000000 +0100
++++ strace-5.7/tests-m32/netlink_protocol.c	2020-09-09 14:59:52.524066242 +0200
+@@ -264,7 +264,7 @@
+ 	printf("sendto(%d, {{len=%u, type=NLMSG_ERROR, flags=NLM_F_REQUEST"
+ 	       ", seq=0, pid=0}, {error=-EACCES"
+ 	       ", msg={len=%u, type=NLMSG_NOOP, flags=NLM_F_REQUEST|0x%x"
+-	       ", seq=%u, pid=%u}}}, %u, MSG_DONTWAIT, NULL, 0) = %s\n",
++	       ", seq=%u, pid=%d}}}, %u, MSG_DONTWAIT, NULL, 0) = %s\n",
+ 	       fd, nlh->nlmsg_len, err->msg.nlmsg_len, NLM_F_DUMP,
+ 	       err->msg.nlmsg_seq, err->msg.nlmsg_pid,
+ 	       nlh->nlmsg_len, sprintrc(rc));
+@@ -289,7 +289,7 @@
+ 	printf("sendto(%d, {{len=%u, type=NLMSG_ERROR, flags=NLM_F_REQUEST"
+ 	       ", seq=0, pid=0}, {error=-EACCES"
+ 	       ", msg={{len=%u, type=NLMSG_NOOP, flags=NLM_F_REQUEST|0x%x"
+-	       ", seq=%u, pid=%u}, \"\\x61\\x62\\x63\\x64\"}}}"
++	       ", seq=%u, pid=%d}, \"\\x61\\x62\\x63\\x64\"}}}"
+ 	       ", %u, MSG_DONTWAIT, NULL, 0) = %s\n",
+ 	       fd, nlh->nlmsg_len, err->msg.nlmsg_len, NLM_F_DUMP,
+ 	       err->msg.nlmsg_seq, err->msg.nlmsg_pid,
+Index: strace-5.7/tests-mx32/bpf.c
+===================================================================
+--- strace-5.7.orig/tests-mx32/bpf.c	2020-04-18 15:47:17.000000000 +0200
++++ strace-5.7/tests-mx32/bpf.c	2020-09-09 14:59:52.261066086 +0200
+@@ -1289,16 +1289,16 @@
+ 
+ static const struct bpf_attr_check BPF_TASK_FD_QUERY_checks[] = {
+ 	{
+-		.data = { .BPF_TASK_FD_QUERY_data = { .pid = 0xdeadbeef } },
++		.data = { .BPF_TASK_FD_QUERY_data = { .pid = 1735928559 } },
+ 		.size = offsetofend(struct BPF_TASK_FD_QUERY_struct, pid),
+-		.str = "task_fd_query={pid=3735928559, fd=0" FD0_PATH
++		.str = "task_fd_query={pid=1735928559, fd=0" FD0_PATH
+ 		       ", flags=0, buf_len=0, buf=NULL, prog_id=0"
+ 		       ", fd_type=BPF_FD_TYPE_RAW_TRACEPOINT"
+ 		       ", probe_offset=0, probe_addr=0}"
+ 	},
+ 	{ /* 1 */
+ 		.data = { .BPF_TASK_FD_QUERY_data = {
+-			.pid = 0xcafef00d,
++			.pid = 1405705229,
+ 			.fd = 0xdeadbeef,
+ 			.flags = 0xfacefeed,
+ 			.buf_len = 0xdefaced,
+@@ -1309,7 +1309,7 @@
+ 			.probe_addr = 0xfac5fed5fac7fed8
+ 		} },
+ 		.size = offsetofend(struct BPF_TASK_FD_QUERY_struct, probe_addr),
+-		.str = "task_fd_query={pid=3405705229"
++		.str = "task_fd_query={pid=1405705229"
+ 		       ", fd=-559038737"
+ 		       ", flags=4207869677"
+ 		       ", buf_len=233811181"
+Index: strace-5.7/tests-mx32/ioctl_block.c
+===================================================================
+--- strace-5.7.orig/tests-mx32/ioctl_block.c	2019-07-24 19:12:18.000000000 +0200
++++ strace-5.7/tests-mx32/ioctl_block.c	2020-09-09 14:59:52.319066120 +0200
+@@ -165,7 +165,7 @@
+ 
+ 	ioctl(-1, BLKTRACESETUP, buts);
+ 	printf("ioctl(-1, BLKTRACESETUP, {act_mask=%hu, buf_size=%u, buf_nr=%u"
+-	       ", start_lba=%" PRI__u64 ", end_lba=%" PRI__u64 ", pid=%u})"
++	       ", start_lba=%" PRI__u64 ", end_lba=%" PRI__u64 ", pid=%d})"
+ 	       " = -1 EBADF (%m)\n",
+ 	       buts->act_mask, buts->buf_size, buts->buf_nr,
+ 	       buts->start_lba, buts->end_lba, buts->pid);
+Index: strace-5.7/tests-mx32/ipc_msg.c
+===================================================================
+--- strace-5.7.orig/tests-mx32/ipc_msg.c	2019-09-25 03:02:03.000000000 +0200
++++ strace-5.7/tests-mx32/ipc_msg.c	2020-09-09 14:59:52.377066155 +0200
+@@ -128,15 +128,15 @@
+ 	printf("msgctl\\(%d, (%s\\|)?%s, \\{msg_perm=\\{uid=%u"
+ 	       ", gid=%u, mode=%#o, key=%u, cuid=%u, cgid=%u\\}, msg_stime=%u"
+ 	       ", msg_rtime=%u, msg_ctime=%u, msg_qnum=%u, msg_qbytes=%u"
+-	       ", msg_lspid=%u, msg_lrpid=%u\\}\\) = 0\n",
++	       ", msg_lspid=%d, msg_lrpid=%d\\}\\) = 0\n",
+ 	       id, str_ipc_64, str_ipc_stat,
+ 	       (unsigned) ds.msg_perm.uid, (unsigned) ds.msg_perm.gid,
+ 	       (unsigned) ds.msg_perm.mode, (unsigned) ds.msg_perm.__key,
+ 	       (unsigned) ds.msg_perm.cuid, (unsigned) ds.msg_perm.cgid,
+ 	       (unsigned) ds.msg_stime, (unsigned) ds.msg_rtime,
+ 	       (unsigned) ds.msg_ctime, (unsigned) ds.msg_qnum,
+-	       (unsigned) ds.msg_qbytes, (unsigned) ds.msg_lspid,
+-	       (unsigned) ds.msg_lrpid);
++	       (unsigned) ds.msg_qbytes, (int) ds.msg_lspid,
++	       (int) ds.msg_lrpid);
+ 
+ 	if (msgctl(id, IPC_SET, &ds))
+ 		perror_msg_and_skip("msgctl IPC_SET");
+Index: strace-5.7/tests-mx32/ipc_shm.c
+===================================================================
+--- strace-5.7.orig/tests-mx32/ipc_shm.c	2019-11-28 20:30:05.000000000 +0100
++++ strace-5.7/tests-mx32/ipc_shm.c	2020-09-09 14:59:52.435066189 +0200
+@@ -168,15 +168,15 @@
+ 	if (shmctl(id, IPC_STAT, &ds))
+ 		perror_msg_and_skip("shmctl IPC_STAT");
+ 	printf("shmctl\\(%d, (%s\\|)?%s, \\{shm_perm=\\{uid=%u, gid=%u, "
+-		"mode=%#o, key=%u, cuid=%u, cgid=%u\\}, shm_segsz=%u, shm_cpid=%u, "
+-		"shm_lpid=%u, shm_nattch=%u, shm_atime=%u, shm_dtime=%u, "
++		"mode=%#o, key=%u, cuid=%u, cgid=%u\\}, shm_segsz=%u, shm_cpid=%d, "
++		"shm_lpid=%d, shm_nattch=%u, shm_atime=%u, shm_dtime=%u, "
+ 		"shm_ctime=%u\\}\\) = 0\n",
+ 		id, str_ipc_64, str_ipc_stat,
+ 		(unsigned) ds.shm_perm.uid, (unsigned) ds.shm_perm.gid,
+ 		(unsigned) ds.shm_perm.mode, (unsigned) ds.shm_perm.__key,
+ 		(unsigned) ds.shm_perm.cuid, (unsigned) ds.shm_perm.cgid,
+-		(unsigned) ds.shm_segsz, (unsigned) ds.shm_cpid,
+-		(unsigned) ds.shm_lpid, (unsigned) ds.shm_nattch,
++		(unsigned) ds.shm_segsz, (int) ds.shm_cpid,
++		(int) ds.shm_lpid, (unsigned) ds.shm_nattch,
+ 		(unsigned) ds.shm_atime, (unsigned) ds.shm_dtime,
+ 		(unsigned) ds. shm_ctime);
+ 
+Index: strace-5.7/tests-mx32/net-yy-netlink.c
+===================================================================
+--- strace-5.7.orig/tests-mx32/net-yy-netlink.c	2020-04-04 00:58:26.000000000 +0200
++++ strace-5.7/tests-mx32/net-yy-netlink.c	2020-09-09 14:59:52.494066225 +0200
+@@ -67,13 +67,13 @@
+ 	if (bind(fd, sa, *len))
+ 		perror_msg_and_skip("bind");
+ 	printf("bind(%d" FMT_UNBOUND ", {sa_family=AF_NETLINK"
+-	       ", nl_pid=%u, nl_groups=00000000}, %u) = 0\n",
++	       ", nl_pid=%d, nl_groups=00000000}, %u) = 0\n",
+ 	       fd, ARG_UNBOUND, addr.nl_pid, (unsigned) *len);
+ 
+ 	if (getsockname(fd, sa, len))
+ 		perror_msg_and_fail("getsockname");
+ 	printf("getsockname(%d" FMT_BOUND ", {sa_family=AF_NETLINK"
+-	       ", nl_pid=%u, nl_groups=00000000}, [%u]) = 0\n",
++	       ", nl_pid=%d, nl_groups=00000000}, [%u]) = 0\n",
+ 	       fd, ARG_BOUND, addr.nl_pid, (unsigned) *len);
+ 
+ 	if (close(fd))
+Index: strace-5.7/tests-mx32/netlink_protocol.c
+===================================================================
+--- strace-5.7.orig/tests-mx32/netlink_protocol.c	2018-12-30 16:35:21.000000000 +0100
++++ strace-5.7/tests-mx32/netlink_protocol.c	2020-09-09 14:59:52.553066260 +0200
+@@ -264,7 +264,7 @@
+ 	printf("sendto(%d, {{len=%u, type=NLMSG_ERROR, flags=NLM_F_REQUEST"
+ 	       ", seq=0, pid=0}, {error=-EACCES"
+ 	       ", msg={len=%u, type=NLMSG_NOOP, flags=NLM_F_REQUEST|0x%x"
+-	       ", seq=%u, pid=%u}}}, %u, MSG_DONTWAIT, NULL, 0) = %s\n",
++	       ", seq=%u, pid=%d}}}, %u, MSG_DONTWAIT, NULL, 0) = %s\n",
+ 	       fd, nlh->nlmsg_len, err->msg.nlmsg_len, NLM_F_DUMP,
+ 	       err->msg.nlmsg_seq, err->msg.nlmsg_pid,
+ 	       nlh->nlmsg_len, sprintrc(rc));
+@@ -289,7 +289,7 @@
+ 	printf("sendto(%d, {{len=%u, type=NLMSG_ERROR, flags=NLM_F_REQUEST"
+ 	       ", seq=0, pid=0}, {error=-EACCES"
+ 	       ", msg={{len=%u, type=NLMSG_NOOP, flags=NLM_F_REQUEST|0x%x"
+-	       ", seq=%u, pid=%u}, \"\\x61\\x62\\x63\\x64\"}}}"
++	       ", seq=%u, pid=%d}, \"\\x61\\x62\\x63\\x64\"}}}"
+ 	       ", %u, MSG_DONTWAIT, NULL, 0) = %s\n",
+ 	       fd, nlh->nlmsg_len, err->msg.nlmsg_len, NLM_F_DUMP,
+ 	       err->msg.nlmsg_seq, err->msg.nlmsg_pid,

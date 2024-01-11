@@ -1,0 +1,235 @@
+From c5be5bb949988c262012e7f4763b1d658c1769b9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=81kos=20Uzonyi?= <uzonyi.akos@gmail.com>
+Date: Fri, 19 Jun 2020 12:06:42 +0200
+Subject: [PATCH 122/138] tests/inject-nf.test: replace getpid with geteuid
+
+Since we treat PIDs as signed integers, large values (>=2^31) will
+cause overflow when we use printpid.
+UIDs are treated as unsigned integers, so geteuid is a good alternative.
+(getuid would be problematic, as it does not exists on alpha).
+Also, on systems where geteuid32 exists, geteuid returns maximum 16 bit
+values, so we have to use geteuid32 in this case.
+
+[ldv: geteuid syscall was introduced on Alpha by Linux kernel commit
+v5.1-rc1~160^2~3^2~1, so this test will not work on old Alpha kernels.]
+
+* tests/inject-nf.c: Replace getpid with either geteuid32 or geteuid.
+[__alpha__]: Remove.
+[__NR_geteuid32]: New condition.
+* tests/inject-nf.test (SYSCALL): Replace getpid with '/^geteuid(32)?$'.
+Remove alpha workaround.
+---
+ tests/inject-nf.c    | 20 +++++++++-----------
+ tests/inject-nf.test |  9 +--------
+ 2 files changed, 10 insertions(+), 19 deletions(-)
+
+Index: strace-5.7/tests/inject-nf.c
+===================================================================
+--- strace-5.7.orig/tests/inject-nf.c	2020-09-09 14:50:44.159739392 +0200
++++ strace-5.7/tests/inject-nf.c	2020-09-09 14:56:17.193937896 +0200
+@@ -16,28 +16,26 @@
+ 
+ #include "raw_syscall.h"
+ 
+-#ifdef __alpha__
+-/* alpha has no getpid */
+-# define SC_NR __NR_getpgrp
+-# define SC_NAME "getpgrp"
+-# define getpid getpgrp
++#ifdef __NR_geteuid32
++# define SC_NR __NR_geteuid32
++# define SC_NAME "geteuid32"
+ #else
+-# define SC_NR __NR_getpid
+-# define SC_NAME "getpid"
++# define SC_NR __NR_geteuid
++# define SC_NAME "geteuid"
+ #endif
+ 
+ #ifdef raw_syscall_0
+ # define INVOKE_SC(err) raw_syscall_0(SC_NR, &err)
+ #else
+-/* No raw_syscall_0, let's use getpid() and hope for the best.  */
+-# define INVOKE_SC(err) getpid()
++/* No raw_syscall_0, let's use geteuid() and hope for the best. */
++# define INVOKE_SC(err) geteuid()
+ #endif
+ 
+ /*
+  * This prototype is intentionally different
+  * from the prototype provided by <unistd.h>.
+  */
+-extern kernel_ulong_t getpid(void);
++extern kernel_ulong_t geteuid(void);
+ 
+ int
+ main(int ac, char **av)
+@@ -45,7 +43,7 @@
+ 	assert(ac == 1 || ac == 2);
+ 
+ 	kernel_ulong_t expected =
+-		(ac == 1) ? getpid() : strtoull(av[1], NULL, 0);
++		(ac == 1) ? geteuid() : strtoull(av[1], NULL, 0);
+ 	kernel_ulong_t err = 0;
+ 	kernel_ulong_t rc = INVOKE_SC(err);
+ 
+Index: strace-5.7/tests/inject-nf.test
+===================================================================
+--- strace-5.7.orig/tests/inject-nf.test	2020-09-09 14:50:44.159739392 +0200
++++ strace-5.7/tests/inject-nf.test	2020-09-09 14:56:17.194937896 +0200
+@@ -9,14 +9,7 @@
+ 
+ . "${srcdir=.}/scno_tampering.sh"
+ 
+-case "$STRACE_ARCH" in
+-alpha)
+-	SYSCALL=getpgrp
+-	;;
+-*)
+-	SYSCALL=getpid
+-	;;
+-esac
++SYSCALL='/^geteuid(32)?$'
+ 
+ run_prog
+ prog="$args"
+Index: strace-5.7/tests-m32/inject-nf.c
+===================================================================
+--- strace-5.7.orig/tests-m32/inject-nf.c	2019-09-25 03:02:03.000000000 +0200
++++ strace-5.7/tests-m32/inject-nf.c	2020-09-09 14:58:03.687001371 +0200
+@@ -16,28 +16,26 @@
+ 
+ #include "raw_syscall.h"
+ 
+-#ifdef __alpha__
+-/* alpha has no getpid */
+-# define SC_NR __NR_getpgrp
+-# define SC_NAME "getpgrp"
+-# define getpid getpgrp
++#ifdef __NR_geteuid32
++# define SC_NR __NR_geteuid32
++# define SC_NAME "geteuid32"
+ #else
+-# define SC_NR __NR_getpid
+-# define SC_NAME "getpid"
++# define SC_NR __NR_geteuid
++# define SC_NAME "geteuid"
+ #endif
+ 
+ #ifdef raw_syscall_0
+ # define INVOKE_SC(err) raw_syscall_0(SC_NR, &err)
+ #else
+-/* No raw_syscall_0, let's use getpid() and hope for the best.  */
+-# define INVOKE_SC(err) getpid()
++/* No raw_syscall_0, let's use geteuid() and hope for the best. */
++# define INVOKE_SC(err) geteuid()
+ #endif
+ 
+ /*
+  * This prototype is intentionally different
+  * from the prototype provided by <unistd.h>.
+  */
+-extern kernel_ulong_t getpid(void);
++extern kernel_ulong_t geteuid(void);
+ 
+ int
+ main(int ac, char **av)
+@@ -45,7 +43,7 @@
+ 	assert(ac == 1 || ac == 2);
+ 
+ 	kernel_ulong_t expected =
+-		(ac == 1) ? getpid() : strtoull(av[1], NULL, 0);
++		(ac == 1) ? geteuid() : strtoull(av[1], NULL, 0);
+ 	kernel_ulong_t err = 0;
+ 	kernel_ulong_t rc = INVOKE_SC(err);
+ 
+Index: strace-5.7/tests-m32/inject-nf.test
+===================================================================
+--- strace-5.7.orig/tests-m32/inject-nf.test	2018-12-25 00:46:43.000000000 +0100
++++ strace-5.7/tests-m32/inject-nf.test	2020-09-09 14:58:03.727001394 +0200
+@@ -9,14 +9,7 @@
+ 
+ . "${srcdir=.}/scno_tampering.sh"
+ 
+-case "$STRACE_ARCH" in
+-alpha)
+-	SYSCALL=getpgrp
+-	;;
+-*)
+-	SYSCALL=getpid
+-	;;
+-esac
++SYSCALL='/^geteuid(32)?$'
+ 
+ run_prog
+ prog="$args"
+Index: strace-5.7/tests-mx32/inject-nf.c
+===================================================================
+--- strace-5.7.orig/tests-mx32/inject-nf.c	2019-09-25 03:02:03.000000000 +0200
++++ strace-5.7/tests-mx32/inject-nf.c	2020-09-09 14:58:03.708001383 +0200
+@@ -16,28 +16,26 @@
+ 
+ #include "raw_syscall.h"
+ 
+-#ifdef __alpha__
+-/* alpha has no getpid */
+-# define SC_NR __NR_getpgrp
+-# define SC_NAME "getpgrp"
+-# define getpid getpgrp
++#ifdef __NR_geteuid32
++# define SC_NR __NR_geteuid32
++# define SC_NAME "geteuid32"
+ #else
+-# define SC_NR __NR_getpid
+-# define SC_NAME "getpid"
++# define SC_NR __NR_geteuid
++# define SC_NAME "geteuid"
+ #endif
+ 
+ #ifdef raw_syscall_0
+ # define INVOKE_SC(err) raw_syscall_0(SC_NR, &err)
+ #else
+-/* No raw_syscall_0, let's use getpid() and hope for the best.  */
+-# define INVOKE_SC(err) getpid()
++/* No raw_syscall_0, let's use geteuid() and hope for the best. */
++# define INVOKE_SC(err) geteuid()
+ #endif
+ 
+ /*
+  * This prototype is intentionally different
+  * from the prototype provided by <unistd.h>.
+  */
+-extern kernel_ulong_t getpid(void);
++extern kernel_ulong_t geteuid(void);
+ 
+ int
+ main(int ac, char **av)
+@@ -45,7 +43,7 @@
+ 	assert(ac == 1 || ac == 2);
+ 
+ 	kernel_ulong_t expected =
+-		(ac == 1) ? getpid() : strtoull(av[1], NULL, 0);
++		(ac == 1) ? geteuid() : strtoull(av[1], NULL, 0);
+ 	kernel_ulong_t err = 0;
+ 	kernel_ulong_t rc = INVOKE_SC(err);
+ 
+Index: strace-5.7/tests-mx32/inject-nf.test
+===================================================================
+--- strace-5.7.orig/tests-mx32/inject-nf.test	2018-12-25 00:46:43.000000000 +0100
++++ strace-5.7/tests-mx32/inject-nf.test	2020-09-09 14:58:03.750001408 +0200
+@@ -9,14 +9,7 @@
+ 
+ . "${srcdir=.}/scno_tampering.sh"
+ 
+-case "$STRACE_ARCH" in
+-alpha)
+-	SYSCALL=getpgrp
+-	;;
+-*)
+-	SYSCALL=getpid
+-	;;
+-esac
++SYSCALL='/^geteuid(32)?$'
+ 
+ run_prog
+ prog="$args"

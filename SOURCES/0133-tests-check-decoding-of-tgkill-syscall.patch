@@ -1,0 +1,656 @@
+From 9d4d64f6fdfcae908aec455888e92a69c9c81c64 Mon Sep 17 00:00:00 2001
+From: "Dmitry V. Levin" <ldv@altlinux.org>
+Date: Sat, 1 Aug 2020 08:00:00 +0000
+Subject: [PATCH 133/138] tests: check decoding of tgkill syscall
+
+* tests/tgkill.c: New file.
+* tests/gen_tests.in (tgkill): New entry.
+* tests/pure_executables.list: Add tgkill.
+* tests/.gitignore: Likewise.
+---
+ tests/.gitignore            |  1 +
+ tests/gen_tests.in          |  1 +
+ tests/pure_executables.list |  1 +
+ tests/tgkill.c              | 69 +++++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 72 insertions(+)
+ create mode 100644 tests/tgkill.c
+
+Index: strace-5.7/tests/gen_tests.in
+===================================================================
+--- strace-5.7.orig/tests/gen_tests.in	2020-09-09 19:30:36.780885588 +0200
++++ strace-5.7/tests/gen_tests.in	2020-09-09 19:32:50.740965435 +0200
+@@ -658,6 +658,7 @@
+ sysinfo	-a14
+ syslog	-a35
+ tee
++tgkill	-a15 --signal='!cont'
+ threads-execve--quiet-thread-execve +threads-execve.test -s40 --quiet=personality,thread-execve
+ threads-execve-q +threads-execve.test -q
+ threads-execve-qq +threads-execve.test -qq
+Index: strace-5.7/tests/pure_executables.list
+===================================================================
+--- strace-5.7.orig/tests/pure_executables.list	2020-09-09 19:30:36.780885588 +0200
++++ strace-5.7/tests/pure_executables.list	2020-09-09 19:32:45.308962197 +0200
+@@ -583,6 +583,7 @@
+ sysinfo
+ syslog
+ tee
++tgkill
+ time
+ timer_create
+ timer_xettime
+Index: strace-5.7/tests/tgkill.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ strace-5.7/tests/tgkill.c	2020-09-09 19:32:50.740965435 +0200
+@@ -0,0 +1,69 @@
++/*
++ * Check decoding of tgkill syscall.
++ *
++ * Copyright (c) 2020 Dmitry V. Levin <ldv@altlinux.org>
++ * All rights reserved.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "tests.h"
++#include "scno.h"
++
++#ifdef __NR_tgkill
++
++# include <signal.h>
++# include <stdio.h>
++# include <unistd.h>
++
++static const char *errstr;
++
++static long
++k_tgkill(const unsigned int tgid,
++	 const unsigned int tid,
++	 const unsigned int sig)
++{
++        const kernel_ulong_t fill = (kernel_ulong_t) 0xdefaced00000000ULL;
++        const kernel_ulong_t bad = (kernel_ulong_t) 0xbadc0dedbadc0dedULL;
++        const kernel_ulong_t arg1 = fill | tgid;
++        const kernel_ulong_t arg2 = fill | tid;
++        const kernel_ulong_t arg3 = fill | sig;
++        const long rc = syscall(__NR_tgkill, arg1, arg2, arg3, bad, bad, bad);
++        errstr = sprintrc(rc);
++        return rc;
++}
++
++int
++main(void)
++{
++	const int pid = getpid();
++	const int bad_pid = -1;
++	const int bad_sig = 0xface;
++
++	k_tgkill(pid, pid, 0);
++	printf("tgkill(%d, %d, 0) = %s\n", pid, pid, errstr);
++
++	k_tgkill(pid, bad_pid, 0);
++	printf("tgkill(%d, %d, 0) = %s\n", pid, bad_pid, errstr);
++
++	k_tgkill(bad_pid, pid, 0);
++	printf("tgkill(%d, %d, 0) = %s\n", bad_pid, pid, errstr);
++
++	k_tgkill(pid, pid, SIGCONT);
++	printf("tgkill(%d, %d, SIGCONT) = %s\n", pid, pid, errstr);
++
++	k_tgkill(pid, pid, bad_sig);
++	printf("tgkill(%d, %d, %d) = %s\n", pid, pid, bad_sig, errstr);
++
++	k_tgkill(pid, pid, -bad_sig);
++	printf("tgkill(%d, %d, %d) = %s\n", pid, pid, -bad_sig, errstr);
++
++	puts("+++ exited with 0 +++");
++	return 0;
++}
++
++#else
++
++SKIP_MAIN_UNDEFINED("__NR_tgkill")
++
++#endif
+Index: strace-5.7/tests-m32/gen_tests.in
+===================================================================
+--- strace-5.7.orig/tests-m32/gen_tests.in	2020-09-09 19:30:36.780885588 +0200
++++ strace-5.7/tests-m32/gen_tests.in	2020-09-09 19:32:50.740965435 +0200
+@@ -658,6 +658,7 @@
+ sysinfo	-a14
+ syslog	-a35
+ tee
++tgkill	-a15 --signal='!cont'
+ threads-execve--quiet-thread-execve +threads-execve.test -s40 --quiet=personality,thread-execve
+ threads-execve-q +threads-execve.test -q
+ threads-execve-qq +threads-execve.test -qq
+Index: strace-5.7/tests-m32/pure_executables.list
+===================================================================
+--- strace-5.7.orig/tests-m32/pure_executables.list	2020-09-09 19:30:36.780885588 +0200
++++ strace-5.7/tests-m32/pure_executables.list	2020-09-09 19:32:45.309962197 +0200
+@@ -583,6 +583,7 @@
+ sysinfo
+ syslog
+ tee
++tgkill
+ time
+ timer_create
+ timer_xettime
+Index: strace-5.7/tests-m32/tgkill.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ strace-5.7/tests-m32/tgkill.c	2020-09-09 19:32:50.740965435 +0200
+@@ -0,0 +1,69 @@
++/*
++ * Check decoding of tgkill syscall.
++ *
++ * Copyright (c) 2020 Dmitry V. Levin <ldv@altlinux.org>
++ * All rights reserved.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "tests.h"
++#include "scno.h"
++
++#ifdef __NR_tgkill
++
++# include <signal.h>
++# include <stdio.h>
++# include <unistd.h>
++
++static const char *errstr;
++
++static long
++k_tgkill(const unsigned int tgid,
++	 const unsigned int tid,
++	 const unsigned int sig)
++{
++        const kernel_ulong_t fill = (kernel_ulong_t) 0xdefaced00000000ULL;
++        const kernel_ulong_t bad = (kernel_ulong_t) 0xbadc0dedbadc0dedULL;
++        const kernel_ulong_t arg1 = fill | tgid;
++        const kernel_ulong_t arg2 = fill | tid;
++        const kernel_ulong_t arg3 = fill | sig;
++        const long rc = syscall(__NR_tgkill, arg1, arg2, arg3, bad, bad, bad);
++        errstr = sprintrc(rc);
++        return rc;
++}
++
++int
++main(void)
++{
++	const int pid = getpid();
++	const int bad_pid = -1;
++	const int bad_sig = 0xface;
++
++	k_tgkill(pid, pid, 0);
++	printf("tgkill(%d, %d, 0) = %s\n", pid, pid, errstr);
++
++	k_tgkill(pid, bad_pid, 0);
++	printf("tgkill(%d, %d, 0) = %s\n", pid, bad_pid, errstr);
++
++	k_tgkill(bad_pid, pid, 0);
++	printf("tgkill(%d, %d, 0) = %s\n", bad_pid, pid, errstr);
++
++	k_tgkill(pid, pid, SIGCONT);
++	printf("tgkill(%d, %d, SIGCONT) = %s\n", pid, pid, errstr);
++
++	k_tgkill(pid, pid, bad_sig);
++	printf("tgkill(%d, %d, %d) = %s\n", pid, pid, bad_sig, errstr);
++
++	k_tgkill(pid, pid, -bad_sig);
++	printf("tgkill(%d, %d, %d) = %s\n", pid, pid, -bad_sig, errstr);
++
++	puts("+++ exited with 0 +++");
++	return 0;
++}
++
++#else
++
++SKIP_MAIN_UNDEFINED("__NR_tgkill")
++
++#endif
+Index: strace-5.7/tests-mx32/gen_tests.in
+===================================================================
+--- strace-5.7.orig/tests-mx32/gen_tests.in	2020-09-09 19:30:36.780885588 +0200
++++ strace-5.7/tests-mx32/gen_tests.in	2020-09-09 19:32:50.740965435 +0200
+@@ -658,6 +658,7 @@
+ sysinfo	-a14
+ syslog	-a35
+ tee
++tgkill	-a15 --signal='!cont'
+ threads-execve--quiet-thread-execve +threads-execve.test -s40 --quiet=personality,thread-execve
+ threads-execve-q +threads-execve.test -q
+ threads-execve-qq +threads-execve.test -qq
+Index: strace-5.7/tests-mx32/pure_executables.list
+===================================================================
+--- strace-5.7.orig/tests-mx32/pure_executables.list	2020-09-09 19:30:36.780885588 +0200
++++ strace-5.7/tests-mx32/pure_executables.list	2020-09-09 19:32:45.310962198 +0200
+@@ -583,6 +583,7 @@
+ sysinfo
+ syslog
+ tee
++tgkill
+ time
+ timer_create
+ timer_xettime
+Index: strace-5.7/tests-mx32/tgkill.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ strace-5.7/tests-mx32/tgkill.c	2020-09-09 19:32:50.740965435 +0200
+@@ -0,0 +1,69 @@
++/*
++ * Check decoding of tgkill syscall.
++ *
++ * Copyright (c) 2020 Dmitry V. Levin <ldv@altlinux.org>
++ * All rights reserved.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "tests.h"
++#include "scno.h"
++
++#ifdef __NR_tgkill
++
++# include <signal.h>
++# include <stdio.h>
++# include <unistd.h>
++
++static const char *errstr;
++
++static long
++k_tgkill(const unsigned int tgid,
++	 const unsigned int tid,
++	 const unsigned int sig)
++{
++        const kernel_ulong_t fill = (kernel_ulong_t) 0xdefaced00000000ULL;
++        const kernel_ulong_t bad = (kernel_ulong_t) 0xbadc0dedbadc0dedULL;
++        const kernel_ulong_t arg1 = fill | tgid;
++        const kernel_ulong_t arg2 = fill | tid;
++        const kernel_ulong_t arg3 = fill | sig;
++        const long rc = syscall(__NR_tgkill, arg1, arg2, arg3, bad, bad, bad);
++        errstr = sprintrc(rc);
++        return rc;
++}
++
++int
++main(void)
++{
++	const int pid = getpid();
++	const int bad_pid = -1;
++	const int bad_sig = 0xface;
++
++	k_tgkill(pid, pid, 0);
++	printf("tgkill(%d, %d, 0) = %s\n", pid, pid, errstr);
++
++	k_tgkill(pid, bad_pid, 0);
++	printf("tgkill(%d, %d, 0) = %s\n", pid, bad_pid, errstr);
++
++	k_tgkill(bad_pid, pid, 0);
++	printf("tgkill(%d, %d, 0) = %s\n", bad_pid, pid, errstr);
++
++	k_tgkill(pid, pid, SIGCONT);
++	printf("tgkill(%d, %d, SIGCONT) = %s\n", pid, pid, errstr);
++
++	k_tgkill(pid, pid, bad_sig);
++	printf("tgkill(%d, %d, %d) = %s\n", pid, pid, bad_sig, errstr);
++
++	k_tgkill(pid, pid, -bad_sig);
++	printf("tgkill(%d, %d, %d) = %s\n", pid, pid, -bad_sig, errstr);
++
++	puts("+++ exited with 0 +++");
++	return 0;
++}
++
++#else
++
++SKIP_MAIN_UNDEFINED("__NR_tgkill")
++
++#endif
+Index: strace-5.7/tests-m32/Makefile.in
+===================================================================
+--- strace-5.7.orig/tests-m32/Makefile.in	2020-09-09 19:32:14.800944013 +0200
++++ strace-5.7/tests-m32/Makefile.in	2020-09-09 19:49:34.530563739 +0200
+@@ -493,8 +493,8 @@
+ 	strace-xx$(EXEEXT) swap$(EXEEXT) sxetmask$(EXEEXT) \
+ 	symlink$(EXEEXT) symlinkat$(EXEEXT) sync$(EXEEXT) \
+ 	sync_file_range$(EXEEXT) sync_file_range2$(EXEEXT) \
+-	sysinfo$(EXEEXT) syslog$(EXEEXT) tee$(EXEEXT) time$(EXEEXT) \
+-	timer_create$(EXEEXT) timer_xettime$(EXEEXT) \
++	sysinfo$(EXEEXT) syslog$(EXEEXT) tee$(EXEEXT) tgkill$(EXEEXT) \
++	time$(EXEEXT) timer_create$(EXEEXT) timer_xettime$(EXEEXT) \
+ 	timerfd_xettime$(EXEEXT) times$(EXEEXT) times-fail$(EXEEXT) \
+ 	tkill$(EXEEXT) truncate$(EXEEXT) truncate64$(EXEEXT) \
+ 	ugetrlimit$(EXEEXT) uio$(EXEEXT) umask$(EXEEXT) \
+@@ -3444,6 +3444,10 @@
+ tee_OBJECTS = tee.$(OBJEXT)
+ tee_LDADD = $(LDADD)
+ tee_DEPENDENCIES = libtests.a
++tgkill_SOURCES = tgkill.c
++tgkill_OBJECTS = tgkill.$(OBJEXT)
++tgkill_LDADD = $(LDADD)
++tgkill_DEPENDENCIES = libtests.a
+ threads_execve_SOURCES = threads-execve.c
+ threads_execve_OBJECTS = threads-execve.$(OBJEXT)
+ threads_execve_DEPENDENCIES = $(am__DEPENDENCIES_1) $(LDADD)
+@@ -4181,7 +4185,7 @@
+ 	./$(DEPDIR)/symlinkat.Po ./$(DEPDIR)/sync.Po \
+ 	./$(DEPDIR)/sync_file_range.Po ./$(DEPDIR)/sync_file_range2.Po \
+ 	./$(DEPDIR)/sysinfo.Po ./$(DEPDIR)/syslog-success.Po \
+-	./$(DEPDIR)/syslog.Po ./$(DEPDIR)/tee.Po \
++	./$(DEPDIR)/syslog.Po ./$(DEPDIR)/tee.Po ./$(DEPDIR)/tgkill.Po \
+ 	./$(DEPDIR)/threads-execve--quiet-thread-execve.Po \
+ 	./$(DEPDIR)/threads-execve-q.Po \
+ 	./$(DEPDIR)/threads-execve-qq.Po \
+@@ -4443,7 +4447,7 @@
+ 	strace--strings-in-hex-non-ascii.c strace-x.c strace-xx.c \
+ 	swap.c sxetmask.c symlink.c symlinkat.c sync.c \
+ 	sync_file_range.c sync_file_range2.c sysinfo.c syslog.c \
+-	syslog-success.c tee.c threads-execve.c \
++	syslog-success.c tee.c tgkill.c threads-execve.c \
+ 	threads-execve--quiet-thread-execve.c threads-execve-q.c \
+ 	threads-execve-qq.c threads-execve-qqq.c time.c timer_create.c \
+ 	timer_xettime.c timerfd_xettime.c times.c times-fail.c tkill.c \
+@@ -4669,7 +4673,7 @@
+ 	strace--strings-in-hex-non-ascii.c strace-x.c strace-xx.c \
+ 	swap.c sxetmask.c symlink.c symlinkat.c sync.c \
+ 	sync_file_range.c sync_file_range2.c sysinfo.c syslog.c \
+-	syslog-success.c tee.c threads-execve.c \
++	syslog-success.c tee.c tgkill.c threads-execve.c \
+ 	threads-execve--quiet-thread-execve.c threads-execve-q.c \
+ 	threads-execve-qq.c threads-execve-qqq.c time.c timer_create.c \
+ 	timer_xettime.c timerfd_xettime.c times.c times-fail.c tkill.c \
+@@ -5724,6 +5728,7 @@
+   sysinfo \
+   syslog \
+   tee \
++  tgkill \
+   time \
+   timer_create \
+   timer_xettime \
+@@ -6133,7 +6138,7 @@
+ 	strace-xx.gen.test swap.gen.test sxetmask.gen.test \
+ 	symlink.gen.test symlinkat.gen.test sync.gen.test \
+ 	sync_file_range.gen.test sync_file_range2.gen.test \
+-	sysinfo.gen.test syslog.gen.test tee.gen.test \
++	sysinfo.gen.test syslog.gen.test tee.gen.test tgkill.gen.test \
+ 	threads-execve--quiet-thread-execve.gen.test \
+ 	threads-execve-q.gen.test threads-execve-qq.gen.test \
+ 	threads-execve-qqq.gen.test time.gen.test \
+@@ -9355,6 +9360,10 @@
+ 	@rm -f tee$(EXEEXT)
+ 	$(AM_V_CCLD)$(LINK) $(tee_OBJECTS) $(tee_LDADD) $(LIBS)
+ 
++tgkill$(EXEEXT): $(tgkill_OBJECTS) $(tgkill_DEPENDENCIES) $(EXTRA_tgkill_DEPENDENCIES) 
++	@rm -f tgkill$(EXEEXT)
++	$(AM_V_CCLD)$(LINK) $(tgkill_OBJECTS) $(tgkill_LDADD) $(LIBS)
++
+ threads-execve$(EXEEXT): $(threads_execve_OBJECTS) $(threads_execve_DEPENDENCIES) $(EXTRA_threads_execve_DEPENDENCIES) 
+ 	@rm -f threads-execve$(EXEEXT)
+ 	$(AM_V_CCLD)$(LINK) $(threads_execve_OBJECTS) $(threads_execve_LDADD) $(LIBS)
+@@ -10349,6 +10358,7 @@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/syslog-success.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/syslog.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tee.Po@am__quote@ # am--include-marker
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tgkill.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/threads-execve--quiet-thread-execve.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/threads-execve-q.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/threads-execve-qq.Po@am__quote@ # am--include-marker
+@@ -12170,6 +12180,7 @@
+ 	-rm -f ./$(DEPDIR)/syslog-success.Po
+ 	-rm -f ./$(DEPDIR)/syslog.Po
+ 	-rm -f ./$(DEPDIR)/tee.Po
++	-rm -f ./$(DEPDIR)/tgkill.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve--quiet-thread-execve.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve-q.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve-qq.Po
+@@ -13026,6 +13037,7 @@
+ 	-rm -f ./$(DEPDIR)/syslog-success.Po
+ 	-rm -f ./$(DEPDIR)/syslog.Po
+ 	-rm -f ./$(DEPDIR)/tee.Po
++	-rm -f ./$(DEPDIR)/tgkill.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve--quiet-thread-execve.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve-q.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve-qq.Po
+@@ -15085,6 +15097,9 @@
+ $(srcdir)/tee.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
+ 	$(AM_V_GEN) $^ $@
+ 
++$(srcdir)/tgkill.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
++	$(AM_V_GEN) $^ $@
++
+ $(srcdir)/threads-execve--quiet-thread-execve.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
+ 	$(AM_V_GEN) $^ $@
+ 
+Index: strace-5.7/tests-mx32/Makefile.in
+===================================================================
+--- strace-5.7.orig/tests-mx32/Makefile.in	2020-09-09 19:32:39.854958946 +0200
++++ strace-5.7/tests-mx32/Makefile.in	2020-09-09 19:49:39.557566736 +0200
+@@ -493,8 +493,8 @@
+ 	strace-xx$(EXEEXT) swap$(EXEEXT) sxetmask$(EXEEXT) \
+ 	symlink$(EXEEXT) symlinkat$(EXEEXT) sync$(EXEEXT) \
+ 	sync_file_range$(EXEEXT) sync_file_range2$(EXEEXT) \
+-	sysinfo$(EXEEXT) syslog$(EXEEXT) tee$(EXEEXT) time$(EXEEXT) \
+-	timer_create$(EXEEXT) timer_xettime$(EXEEXT) \
++	sysinfo$(EXEEXT) syslog$(EXEEXT) tee$(EXEEXT) tgkill$(EXEEXT) \
++	time$(EXEEXT) timer_create$(EXEEXT) timer_xettime$(EXEEXT) \
+ 	timerfd_xettime$(EXEEXT) times$(EXEEXT) times-fail$(EXEEXT) \
+ 	tkill$(EXEEXT) truncate$(EXEEXT) truncate64$(EXEEXT) \
+ 	ugetrlimit$(EXEEXT) uio$(EXEEXT) umask$(EXEEXT) \
+@@ -3444,6 +3444,10 @@
+ tee_OBJECTS = tee.$(OBJEXT)
+ tee_LDADD = $(LDADD)
+ tee_DEPENDENCIES = libtests.a
++tgkill_SOURCES = tgkill.c
++tgkill_OBJECTS = tgkill.$(OBJEXT)
++tgkill_LDADD = $(LDADD)
++tgkill_DEPENDENCIES = libtests.a
+ threads_execve_SOURCES = threads-execve.c
+ threads_execve_OBJECTS = threads-execve.$(OBJEXT)
+ threads_execve_DEPENDENCIES = $(am__DEPENDENCIES_1) $(LDADD)
+@@ -4181,7 +4185,7 @@
+ 	./$(DEPDIR)/symlinkat.Po ./$(DEPDIR)/sync.Po \
+ 	./$(DEPDIR)/sync_file_range.Po ./$(DEPDIR)/sync_file_range2.Po \
+ 	./$(DEPDIR)/sysinfo.Po ./$(DEPDIR)/syslog-success.Po \
+-	./$(DEPDIR)/syslog.Po ./$(DEPDIR)/tee.Po \
++	./$(DEPDIR)/syslog.Po ./$(DEPDIR)/tee.Po ./$(DEPDIR)/tgkill.Po \
+ 	./$(DEPDIR)/threads-execve--quiet-thread-execve.Po \
+ 	./$(DEPDIR)/threads-execve-q.Po \
+ 	./$(DEPDIR)/threads-execve-qq.Po \
+@@ -4443,7 +4447,7 @@
+ 	strace--strings-in-hex-non-ascii.c strace-x.c strace-xx.c \
+ 	swap.c sxetmask.c symlink.c symlinkat.c sync.c \
+ 	sync_file_range.c sync_file_range2.c sysinfo.c syslog.c \
+-	syslog-success.c tee.c threads-execve.c \
++	syslog-success.c tee.c tgkill.c threads-execve.c \
+ 	threads-execve--quiet-thread-execve.c threads-execve-q.c \
+ 	threads-execve-qq.c threads-execve-qqq.c time.c timer_create.c \
+ 	timer_xettime.c timerfd_xettime.c times.c times-fail.c tkill.c \
+@@ -4669,7 +4673,7 @@
+ 	strace--strings-in-hex-non-ascii.c strace-x.c strace-xx.c \
+ 	swap.c sxetmask.c symlink.c symlinkat.c sync.c \
+ 	sync_file_range.c sync_file_range2.c sysinfo.c syslog.c \
+-	syslog-success.c tee.c threads-execve.c \
++	syslog-success.c tee.c tgkill.c threads-execve.c \
+ 	threads-execve--quiet-thread-execve.c threads-execve-q.c \
+ 	threads-execve-qq.c threads-execve-qqq.c time.c timer_create.c \
+ 	timer_xettime.c timerfd_xettime.c times.c times-fail.c tkill.c \
+@@ -5724,6 +5728,7 @@
+   sysinfo \
+   syslog \
+   tee \
++  tgkill \
+   time \
+   timer_create \
+   timer_xettime \
+@@ -6133,7 +6138,7 @@
+ 	strace-xx.gen.test swap.gen.test sxetmask.gen.test \
+ 	symlink.gen.test symlinkat.gen.test sync.gen.test \
+ 	sync_file_range.gen.test sync_file_range2.gen.test \
+-	sysinfo.gen.test syslog.gen.test tee.gen.test \
++	sysinfo.gen.test syslog.gen.test tee.gen.test tgkill.gen.test \
+ 	threads-execve--quiet-thread-execve.gen.test \
+ 	threads-execve-q.gen.test threads-execve-qq.gen.test \
+ 	threads-execve-qqq.gen.test time.gen.test \
+@@ -9355,6 +9360,10 @@
+ 	@rm -f tee$(EXEEXT)
+ 	$(AM_V_CCLD)$(LINK) $(tee_OBJECTS) $(tee_LDADD) $(LIBS)
+ 
++tgkill$(EXEEXT): $(tgkill_OBJECTS) $(tgkill_DEPENDENCIES) $(EXTRA_tgkill_DEPENDENCIES) 
++	@rm -f tgkill$(EXEEXT)
++	$(AM_V_CCLD)$(LINK) $(tgkill_OBJECTS) $(tgkill_LDADD) $(LIBS)
++
+ threads-execve$(EXEEXT): $(threads_execve_OBJECTS) $(threads_execve_DEPENDENCIES) $(EXTRA_threads_execve_DEPENDENCIES) 
+ 	@rm -f threads-execve$(EXEEXT)
+ 	$(AM_V_CCLD)$(LINK) $(threads_execve_OBJECTS) $(threads_execve_LDADD) $(LIBS)
+@@ -10349,6 +10358,7 @@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/syslog-success.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/syslog.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tee.Po@am__quote@ # am--include-marker
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tgkill.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/threads-execve--quiet-thread-execve.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/threads-execve-q.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/threads-execve-qq.Po@am__quote@ # am--include-marker
+@@ -12170,6 +12180,7 @@
+ 	-rm -f ./$(DEPDIR)/syslog-success.Po
+ 	-rm -f ./$(DEPDIR)/syslog.Po
+ 	-rm -f ./$(DEPDIR)/tee.Po
++	-rm -f ./$(DEPDIR)/tgkill.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve--quiet-thread-execve.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve-q.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve-qq.Po
+@@ -13026,6 +13037,7 @@
+ 	-rm -f ./$(DEPDIR)/syslog-success.Po
+ 	-rm -f ./$(DEPDIR)/syslog.Po
+ 	-rm -f ./$(DEPDIR)/tee.Po
++	-rm -f ./$(DEPDIR)/tgkill.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve--quiet-thread-execve.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve-q.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve-qq.Po
+@@ -15085,6 +15097,9 @@
+ $(srcdir)/tee.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
+ 	$(AM_V_GEN) $^ $@
+ 
++$(srcdir)/tgkill.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
++	$(AM_V_GEN) $^ $@
++
+ $(srcdir)/threads-execve--quiet-thread-execve.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
+ 	$(AM_V_GEN) $^ $@
+ 
+Index: strace-5.7/tests/Makefile.in
+===================================================================
+--- strace-5.7.orig/tests/Makefile.in	2020-09-09 19:30:36.780885588 +0200
++++ strace-5.7/tests/Makefile.in	2020-09-09 19:46:24.904450714 +0200
+@@ -493,8 +493,8 @@
+ 	strace-xx$(EXEEXT) swap$(EXEEXT) sxetmask$(EXEEXT) \
+ 	symlink$(EXEEXT) symlinkat$(EXEEXT) sync$(EXEEXT) \
+ 	sync_file_range$(EXEEXT) sync_file_range2$(EXEEXT) \
+-	sysinfo$(EXEEXT) syslog$(EXEEXT) tee$(EXEEXT) time$(EXEEXT) \
+-	timer_create$(EXEEXT) timer_xettime$(EXEEXT) \
++	sysinfo$(EXEEXT) syslog$(EXEEXT) tee$(EXEEXT) tgkill$(EXEEXT) \
++	time$(EXEEXT) timer_create$(EXEEXT) timer_xettime$(EXEEXT) \
+ 	timerfd_xettime$(EXEEXT) times$(EXEEXT) times-fail$(EXEEXT) \
+ 	tkill$(EXEEXT) truncate$(EXEEXT) truncate64$(EXEEXT) \
+ 	ugetrlimit$(EXEEXT) uio$(EXEEXT) umask$(EXEEXT) \
+@@ -3444,6 +3444,10 @@
+ tee_OBJECTS = tee.$(OBJEXT)
+ tee_LDADD = $(LDADD)
+ tee_DEPENDENCIES = libtests.a
++tgkill_SOURCES = tgkill.c
++tgkill_OBJECTS = tgkill.$(OBJEXT)
++tgkill_LDADD = $(LDADD)
++tgkill_DEPENDENCIES = libtests.a
+ threads_execve_SOURCES = threads-execve.c
+ threads_execve_OBJECTS = threads-execve.$(OBJEXT)
+ threads_execve_DEPENDENCIES = $(am__DEPENDENCIES_1) $(LDADD)
+@@ -4181,7 +4185,7 @@
+ 	./$(DEPDIR)/symlinkat.Po ./$(DEPDIR)/sync.Po \
+ 	./$(DEPDIR)/sync_file_range.Po ./$(DEPDIR)/sync_file_range2.Po \
+ 	./$(DEPDIR)/sysinfo.Po ./$(DEPDIR)/syslog-success.Po \
+-	./$(DEPDIR)/syslog.Po ./$(DEPDIR)/tee.Po \
++	./$(DEPDIR)/syslog.Po ./$(DEPDIR)/tee.Po ./$(DEPDIR)/tgkill.Po \
+ 	./$(DEPDIR)/threads-execve--quiet-thread-execve.Po \
+ 	./$(DEPDIR)/threads-execve-q.Po \
+ 	./$(DEPDIR)/threads-execve-qq.Po \
+@@ -4443,7 +4447,7 @@
+ 	strace--strings-in-hex-non-ascii.c strace-x.c strace-xx.c \
+ 	swap.c sxetmask.c symlink.c symlinkat.c sync.c \
+ 	sync_file_range.c sync_file_range2.c sysinfo.c syslog.c \
+-	syslog-success.c tee.c threads-execve.c \
++	syslog-success.c tee.c tgkill.c threads-execve.c \
+ 	threads-execve--quiet-thread-execve.c threads-execve-q.c \
+ 	threads-execve-qq.c threads-execve-qqq.c time.c timer_create.c \
+ 	timer_xettime.c timerfd_xettime.c times.c times-fail.c tkill.c \
+@@ -4669,7 +4673,7 @@
+ 	strace--strings-in-hex-non-ascii.c strace-x.c strace-xx.c \
+ 	swap.c sxetmask.c symlink.c symlinkat.c sync.c \
+ 	sync_file_range.c sync_file_range2.c sysinfo.c syslog.c \
+-	syslog-success.c tee.c threads-execve.c \
++	syslog-success.c tee.c tgkill.c threads-execve.c \
+ 	threads-execve--quiet-thread-execve.c threads-execve-q.c \
+ 	threads-execve-qq.c threads-execve-qqq.c time.c timer_create.c \
+ 	timer_xettime.c timerfd_xettime.c times.c times-fail.c tkill.c \
+@@ -5724,6 +5728,7 @@
+   sysinfo \
+   syslog \
+   tee \
++  tgkill \
+   time \
+   timer_create \
+   timer_xettime \
+@@ -6133,7 +6138,7 @@
+ 	strace-xx.gen.test swap.gen.test sxetmask.gen.test \
+ 	symlink.gen.test symlinkat.gen.test sync.gen.test \
+ 	sync_file_range.gen.test sync_file_range2.gen.test \
+-	sysinfo.gen.test syslog.gen.test tee.gen.test \
++	sysinfo.gen.test syslog.gen.test tee.gen.test tgkill.gen.test \
+ 	threads-execve--quiet-thread-execve.gen.test \
+ 	threads-execve-q.gen.test threads-execve-qq.gen.test \
+ 	threads-execve-qqq.gen.test time.gen.test \
+@@ -9355,6 +9360,10 @@
+ 	@rm -f tee$(EXEEXT)
+ 	$(AM_V_CCLD)$(LINK) $(tee_OBJECTS) $(tee_LDADD) $(LIBS)
+ 
++tgkill$(EXEEXT): $(tgkill_OBJECTS) $(tgkill_DEPENDENCIES) $(EXTRA_tgkill_DEPENDENCIES) 
++	@rm -f tgkill$(EXEEXT)
++	$(AM_V_CCLD)$(LINK) $(tgkill_OBJECTS) $(tgkill_LDADD) $(LIBS)
++
+ threads-execve$(EXEEXT): $(threads_execve_OBJECTS) $(threads_execve_DEPENDENCIES) $(EXTRA_threads_execve_DEPENDENCIES) 
+ 	@rm -f threads-execve$(EXEEXT)
+ 	$(AM_V_CCLD)$(LINK) $(threads_execve_OBJECTS) $(threads_execve_LDADD) $(LIBS)
+@@ -10349,6 +10358,7 @@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/syslog-success.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/syslog.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tee.Po@am__quote@ # am--include-marker
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tgkill.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/threads-execve--quiet-thread-execve.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/threads-execve-q.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/threads-execve-qq.Po@am__quote@ # am--include-marker
+@@ -12170,6 +12180,7 @@
+ 	-rm -f ./$(DEPDIR)/syslog-success.Po
+ 	-rm -f ./$(DEPDIR)/syslog.Po
+ 	-rm -f ./$(DEPDIR)/tee.Po
++	-rm -f ./$(DEPDIR)/tgkill.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve--quiet-thread-execve.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve-q.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve-qq.Po
+@@ -13026,6 +13037,7 @@
+ 	-rm -f ./$(DEPDIR)/syslog-success.Po
+ 	-rm -f ./$(DEPDIR)/syslog.Po
+ 	-rm -f ./$(DEPDIR)/tee.Po
++	-rm -f ./$(DEPDIR)/tgkill.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve--quiet-thread-execve.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve-q.Po
+ 	-rm -f ./$(DEPDIR)/threads-execve-qq.Po
+@@ -15085,6 +15097,9 @@
+ $(srcdir)/tee.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
+ 	$(AM_V_GEN) $^ $@
+ 
++$(srcdir)/tgkill.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
++	$(AM_V_GEN) $^ $@
++
+ $(srcdir)/threads-execve--quiet-thread-execve.gen.test: $(abs_srcdir)/gen_tests.sh $(srcdir)/gen_tests.in
+ 	$(AM_V_GEN) $^ $@
+ 

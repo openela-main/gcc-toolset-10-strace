@@ -1,0 +1,518 @@
+From 56a29d0e192b119c101146e2197246f51661b6b5 Mon Sep 17 00:00:00 2001
+From: "Dmitry V. Levin" <ldv@altlinux.org>
+Date: Fri, 17 Jul 2020 08:00:00 +0000
+Subject: [PATCH 125/138] printsiginfo: fix printing of siginfo_t.si_pid and
+ siginfo_t.si_uid
+
+* printsiginfo.c (printsigsource): Print siginfo_t.si_pid using
+PRINT_FIELD_D, print siginfo_t.si_uid using PRINT_FIELD_UID.
+* tests/clone_ptrace.c (main): Update expected output.
+* tests/orphaned_process_group.c (main): Likewise.
+* tests/pidfd_send_signal.c (main): Likewise.
+* tests/ptrace.c (test_peeksiginfo): Likewise.
+* tests/rt_sigqueueinfo.c (main): Likewise.
+* tests/rt_tgsigqueueinfo.c (main): Likewise.
+* tests/siginfo.c (main): Likewise.
+* tests/waitid.c (sprint_siginfo): Likewise.
+---
+ printsiginfo.c                 |  5 ++---
+ tests/clone_ptrace.c           |  2 +-
+ tests/orphaned_process_group.c |  2 +-
+ tests/pidfd_send_signal.c      |  2 +-
+ tests/ptrace.c                 | 12 ++++++------
+ tests/rt_sigqueueinfo.c        |  2 +-
+ tests/rt_tgsigqueueinfo.c      |  4 ++--
+ tests/siginfo.c                | 10 +++++-----
+ tests/waitid.c                 |  4 ++--
+ 9 files changed, 21 insertions(+), 22 deletions(-)
+
+Index: strace-5.7/printsiginfo.c
+===================================================================
+--- strace-5.7.orig/printsiginfo.c	2020-09-09 14:50:44.013739305 +0200
++++ strace-5.7/printsiginfo.c	2020-09-09 14:58:30.753017503 +0200
+@@ -58,9 +58,8 @@
+ static void
+ printsigsource(const siginfo_t *sip)
+ {
+-	tprintf(", si_pid=%u, si_uid=%u",
+-		(unsigned int) sip->si_pid,
+-		(unsigned int) sip->si_uid);
++	PRINT_FIELD_D(", ", *sip, si_pid);
++	PRINT_FIELD_UID(", ", *sip, si_uid);
+ }
+ 
+ static void
+Index: strace-5.7/tests/clone_ptrace.c
+===================================================================
+--- strace-5.7.orig/tests/clone_ptrace.c	2020-09-09 14:50:44.013739305 +0200
++++ strace-5.7/tests/clone_ptrace.c	2020-09-09 14:58:30.754017504 +0200
+@@ -96,7 +96,7 @@
+ 		error_msg_and_fail("unexpected child exit status %d", status);
+ 
+ 	printf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_KILLED, si_pid=%d"
+-	       ", si_uid=%u, si_status=%s, si_utime=%u, si_stime=%u} ---\n"
++	       ", si_uid=%d, si_status=%s, si_utime=%u, si_stime=%u} ---\n"
+ #if !QUIET_EXIT
+ 	       "+++ exited with 0 +++\n"
+ #endif
+Index: strace-5.7/tests/orphaned_process_group.c
+===================================================================
+--- strace-5.7.orig/tests/orphaned_process_group.c	2020-09-09 14:50:44.013739305 +0200
++++ strace-5.7/tests/orphaned_process_group.c	2020-09-09 14:58:30.754017504 +0200
+@@ -139,7 +139,7 @@
+ 	 */
+ 	leader = getpid();
+ 	printf("%-5d --- %s {si_signo=%s, si_code=SI_TKILL"
+-	       ", si_pid=%d, si_uid=%u} ---\n",
++	       ", si_pid=%d, si_uid=%d} ---\n",
+ 	       stopped, "SIGSTOP", "SIGSTOP", stopped, geteuid());
+ 	printf("%-5d --- stopped by SIGSTOP ---\n", stopped);
+ 	printf("%-5d +++ exited with 0 +++\n", leader);
+Index: strace-5.7/tests/pidfd_send_signal.c
+===================================================================
+--- strace-5.7.orig/tests/pidfd_send_signal.c	2020-09-09 14:50:44.013739305 +0200
++++ strace-5.7/tests/pidfd_send_signal.c	2020-09-09 14:58:30.754017504 +0200
+@@ -54,7 +54,7 @@
+ 
+ 	sys_pidfd_send_signal(fd, SIGUSR2, si, -1);
+ 	printf("pidfd_send_signal(%d, SIGUSR2, {si_signo=SIGUSR1"
+-	       ", si_code=SI_QUEUE, si_errno=%u, si_pid=%u, si_uid=%u"
++	       ", si_code=SI_QUEUE, si_errno=%u, si_pid=%d, si_uid=%d"
+ 	       ", si_value={int=%d, ptr=%p}}, %#x) = %s\n",
+ 	       fd, si->si_errno, si->si_pid, si->si_uid, si->si_int, si->si_ptr,
+ 	       -1U, errstr);
+Index: strace-5.7/tests/ptrace.c
+===================================================================
+--- strace-5.7.orig/tests/ptrace.c	2020-09-09 14:50:44.013739305 +0200
++++ strace-5.7/tests/ptrace.c	2020-09-09 14:58:30.754017504 +0200
+@@ -127,16 +127,16 @@
+ 			printf("ptrace(PTRACE_PEEKSIGINFO, %u"
+ 			       ", {off=%llu, flags=0, nr=%u}"
+ 			       ", [{si_signo=SIGUSR1, si_code=SI_TKILL"
+-			       ", si_pid=%u, si_uid=%u}"
++			       ", si_pid=%d, si_uid=%d}"
+ 			       ", {si_signo=SIGUSR2, si_code=SI_TKILL"
+-			       ", si_pid=%u, si_uid=%u}"
++			       ", si_pid=%d, si_uid=%d}"
+ 			       ", {si_signo=SIGALRM, si_code=SI_TKILL"
+-			       ", si_pid=%u, si_uid=%u}"
++			       ", si_pid=%d, si_uid=%d}"
+ 			       "]) = %s\n",
+ 			       (unsigned) pid, psi->off, psi->nr,
+-			       (unsigned) pid, (unsigned) uid,
+-			       (unsigned) pid, (unsigned) uid,
+-			       (unsigned) pid, (unsigned) uid,
++			       (int) pid, (int) uid,
++			       (int) pid, (int) uid,
++			       (int) pid, (int) uid,
+ 			       errstr);
+ 		}
+ 
+Index: strace-5.7/tests/rt_sigqueueinfo.c
+===================================================================
+--- strace-5.7.orig/tests/rt_sigqueueinfo.c	2020-09-09 14:50:44.013739305 +0200
++++ strace-5.7/tests/rt_sigqueueinfo.c	2020-09-09 14:58:30.754017504 +0200
+@@ -27,7 +27,7 @@
+ 	if (sigqueue(pid, SIGUSR1, value))
+ 		perror_msg_and_skip("sigqueue");
+ 	printf("rt_sigqueueinfo(%u, SIGUSR1, {si_signo=SIGUSR1, "
+-		"si_code=SI_QUEUE, si_pid=%u, si_uid=%u, "
++		"si_code=SI_QUEUE, si_pid=%d, si_uid=%d, "
+ 		"si_value={int=%d, ptr=%p}}) = 0\n",
+ 		pid, pid, getuid(), value.sival_int, value.sival_ptr);
+ 	printf("+++ exited with 0 +++\n");
+Index: strace-5.7/tests/rt_tgsigqueueinfo.c
+===================================================================
+--- strace-5.7.orig/tests/rt_tgsigqueueinfo.c	2020-09-09 14:50:44.013739305 +0200
++++ strace-5.7/tests/rt_tgsigqueueinfo.c	2020-09-09 14:58:30.755017504 +0200
+@@ -53,8 +53,8 @@
+ 			"rt_tgsigqueueinfo");
+ 
+ 	printf("rt_tgsigqueueinfo(%u, %u, %s, {si_signo=%s"
+-		", si_code=SI_QUEUE, si_errno=ENOENT, si_pid=%u"
+-		", si_uid=%u, si_value={int=%d, ptr=%p}}) = 0\n",
++		", si_code=SI_QUEUE, si_errno=ENOENT, si_pid=%d"
++		", si_uid=%d, si_value={int=%d, ptr=%p}}) = 0\n",
+ 		info->si_pid, info->si_pid, "SIGUSR1", "SIGUSR1",
+ 		info->si_pid, info->si_uid, info->si_value.sival_int,
+ 		info->si_value.sival_ptr);
+Index: strace-5.7/tests/siginfo.c
+===================================================================
+--- strace-5.7.orig/tests/siginfo.c	2020-09-09 14:50:44.013739305 +0200
++++ strace-5.7/tests/siginfo.c	2020-09-09 14:58:30.755017504 +0200
+@@ -63,7 +63,7 @@
+ 
+ 	sigsuspend(&unblock_mask);
+ 	tprintf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED"
+-		", si_pid=%d, si_uid=%u, si_status=%d"
++		", si_pid=%d, si_uid=%d, si_status=%d"
+ 		", si_utime=%llu, si_stime=%llu} ---\n",
+ 		sinfo.si_pid, sinfo.si_uid, sinfo.si_status,
+ 		zero_extend_signed_to_ull(sinfo.si_utime),
+@@ -94,7 +94,7 @@
+ 
+ 	sigsuspend(&unblock_mask);
+ 	tprintf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_KILLED"
+-		", si_pid=%d, si_uid=%u, si_status=SIGUSR1"
++		", si_pid=%d, si_uid=%d, si_status=SIGUSR1"
+ 		", si_utime=%llu, si_stime=%llu} ---\n",
+ 		sinfo.si_pid, sinfo.si_uid,
+ 		zero_extend_signed_to_ull(sinfo.si_utime),
+@@ -121,7 +121,7 @@
+ 
+ 	sigsuspend(&unblock_mask);
+ 	tprintf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_STOPPED"
+-		", si_pid=%d, si_uid=%u, si_status=SIGSTOP"
++		", si_pid=%d, si_uid=%d, si_status=SIGSTOP"
+ 		", si_utime=%llu, si_stime=%llu} ---\n",
+ 		sinfo.si_pid, sinfo.si_uid,
+ 		zero_extend_signed_to_ull(sinfo.si_utime),
+@@ -131,7 +131,7 @@
+ 
+ 	sigsuspend(&unblock_mask);
+ 	tprintf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_CONTINUED"
+-		", si_pid=%d, si_uid=%u, si_status=SIGCONT"
++		", si_pid=%d, si_uid=%d, si_status=SIGCONT"
+ 		", si_utime=%llu, si_stime=%llu} ---\n",
+ 		sinfo.si_pid, sinfo.si_uid,
+ 		zero_extend_signed_to_ull(sinfo.si_utime),
+@@ -142,7 +142,7 @@
+ 
+ 	sigsuspend(&unblock_mask);
+ 	tprintf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED"
+-		", si_pid=%d, si_uid=%u, si_status=0"
++		", si_pid=%d, si_uid=%d, si_status=0"
+ 		", si_utime=%llu, si_stime=%llu} ---\n",
+ 		sinfo.si_pid, sinfo.si_uid,
+ 		zero_extend_signed_to_ull(sinfo.si_utime),
+Index: strace-5.7/tests/waitid.c
+===================================================================
+--- strace-5.7.orig/tests/waitid.c	2020-09-09 14:50:44.013739305 +0200
++++ strace-5.7/tests/waitid.c	2020-09-09 14:58:30.755017504 +0200
+@@ -103,8 +103,8 @@
+ 	snprintf(buf, sizeof(buf),
+ 		 "{si_signo=SIGCHLD"
+ 		 ", si_code=%s"
+-		 ", si_pid=%u"
+-		 ", si_uid=%u"
++		 ", si_pid=%d"
++		 ", si_uid=%d"
+ 		 ", si_status=%s"
+ 		 ", si_utime=%llu"
+ 		 ", si_stime=%llu}",
+Index: strace-5.7/tests-m32/clone_ptrace.c
+===================================================================
+--- strace-5.7.orig/tests-m32/clone_ptrace.c	2020-04-04 00:58:26.000000000 +0200
++++ strace-5.7/tests-m32/clone_ptrace.c	2020-09-09 14:59:06.931039067 +0200
+@@ -96,7 +96,7 @@
+ 		error_msg_and_fail("unexpected child exit status %d", status);
+ 
+ 	printf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_KILLED, si_pid=%d"
+-	       ", si_uid=%u, si_status=%s, si_utime=%u, si_stime=%u} ---\n"
++	       ", si_uid=%d, si_status=%s, si_utime=%u, si_stime=%u} ---\n"
+ #if !QUIET_EXIT
+ 	       "+++ exited with 0 +++\n"
+ #endif
+Index: strace-5.7/tests-m32/orphaned_process_group.c
+===================================================================
+--- strace-5.7.orig/tests-m32/orphaned_process_group.c	2019-03-06 17:02:38.000000000 +0100
++++ strace-5.7/tests-m32/orphaned_process_group.c	2020-09-09 14:59:07.012039115 +0200
+@@ -139,7 +139,7 @@
+ 	 */
+ 	leader = getpid();
+ 	printf("%-5d --- %s {si_signo=%s, si_code=SI_TKILL"
+-	       ", si_pid=%d, si_uid=%u} ---\n",
++	       ", si_pid=%d, si_uid=%d} ---\n",
+ 	       stopped, "SIGSTOP", "SIGSTOP", stopped, geteuid());
+ 	printf("%-5d --- stopped by SIGSTOP ---\n", stopped);
+ 	printf("%-5d +++ exited with 0 +++\n", leader);
+Index: strace-5.7/tests-m32/pidfd_send_signal.c
+===================================================================
+--- strace-5.7.orig/tests-m32/pidfd_send_signal.c	2019-08-14 13:22:32.000000000 +0200
++++ strace-5.7/tests-m32/pidfd_send_signal.c	2020-09-09 14:59:07.077039154 +0200
+@@ -54,7 +54,7 @@
+ 
+ 	sys_pidfd_send_signal(fd, SIGUSR2, si, -1);
+ 	printf("pidfd_send_signal(%d, SIGUSR2, {si_signo=SIGUSR1"
+-	       ", si_code=SI_QUEUE, si_errno=%u, si_pid=%u, si_uid=%u"
++	       ", si_code=SI_QUEUE, si_errno=%u, si_pid=%d, si_uid=%d"
+ 	       ", si_value={int=%d, ptr=%p}}, %#x) = %s\n",
+ 	       fd, si->si_errno, si->si_pid, si->si_uid, si->si_int, si->si_ptr,
+ 	       -1U, errstr);
+Index: strace-5.7/tests-m32/ptrace.c
+===================================================================
+--- strace-5.7.orig/tests-m32/ptrace.c	2019-09-25 03:02:03.000000000 +0200
++++ strace-5.7/tests-m32/ptrace.c	2020-09-09 14:59:07.142039193 +0200
+@@ -127,16 +127,16 @@
+ 			printf("ptrace(PTRACE_PEEKSIGINFO, %u"
+ 			       ", {off=%llu, flags=0, nr=%u}"
+ 			       ", [{si_signo=SIGUSR1, si_code=SI_TKILL"
+-			       ", si_pid=%u, si_uid=%u}"
++			       ", si_pid=%d, si_uid=%d}"
+ 			       ", {si_signo=SIGUSR2, si_code=SI_TKILL"
+-			       ", si_pid=%u, si_uid=%u}"
++			       ", si_pid=%d, si_uid=%d}"
+ 			       ", {si_signo=SIGALRM, si_code=SI_TKILL"
+-			       ", si_pid=%u, si_uid=%u}"
++			       ", si_pid=%d, si_uid=%d}"
+ 			       "]) = %s\n",
+ 			       (unsigned) pid, psi->off, psi->nr,
+-			       (unsigned) pid, (unsigned) uid,
+-			       (unsigned) pid, (unsigned) uid,
+-			       (unsigned) pid, (unsigned) uid,
++			       (int) pid, (int) uid,
++			       (int) pid, (int) uid,
++			       (int) pid, (int) uid,
+ 			       errstr);
+ 		}
+ 
+Index: strace-5.7/tests-m32/rt_sigqueueinfo.c
+===================================================================
+--- strace-5.7.orig/tests-m32/rt_sigqueueinfo.c	2018-12-25 00:46:43.000000000 +0100
++++ strace-5.7/tests-m32/rt_sigqueueinfo.c	2020-09-09 14:59:07.204039230 +0200
+@@ -27,7 +27,7 @@
+ 	if (sigqueue(pid, SIGUSR1, value))
+ 		perror_msg_and_skip("sigqueue");
+ 	printf("rt_sigqueueinfo(%u, SIGUSR1, {si_signo=SIGUSR1, "
+-		"si_code=SI_QUEUE, si_pid=%u, si_uid=%u, "
++		"si_code=SI_QUEUE, si_pid=%d, si_uid=%d, "
+ 		"si_value={int=%d, ptr=%p}}) = 0\n",
+ 		pid, pid, getuid(), value.sival_int, value.sival_ptr);
+ 	printf("+++ exited with 0 +++\n");
+Index: strace-5.7/tests-m32/rt_tgsigqueueinfo.c
+===================================================================
+--- strace-5.7.orig/tests-m32/rt_tgsigqueueinfo.c	2019-09-25 03:02:03.000000000 +0200
++++ strace-5.7/tests-m32/rt_tgsigqueueinfo.c	2020-09-09 14:59:07.258039262 +0200
+@@ -53,8 +53,8 @@
+ 			"rt_tgsigqueueinfo");
+ 
+ 	printf("rt_tgsigqueueinfo(%u, %u, %s, {si_signo=%s"
+-		", si_code=SI_QUEUE, si_errno=ENOENT, si_pid=%u"
+-		", si_uid=%u, si_value={int=%d, ptr=%p}}) = 0\n",
++		", si_code=SI_QUEUE, si_errno=ENOENT, si_pid=%d"
++		", si_uid=%d, si_value={int=%d, ptr=%p}}) = 0\n",
+ 		info->si_pid, info->si_pid, "SIGUSR1", "SIGUSR1",
+ 		info->si_pid, info->si_uid, info->si_value.sival_int,
+ 		info->si_value.sival_ptr);
+Index: strace-5.7/tests-m32/siginfo.c
+===================================================================
+--- strace-5.7.orig/tests-m32/siginfo.c	2018-12-25 00:46:43.000000000 +0100
++++ strace-5.7/tests-m32/siginfo.c	2020-09-09 14:59:07.311039293 +0200
+@@ -63,7 +63,7 @@
+ 
+ 	sigsuspend(&unblock_mask);
+ 	tprintf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED"
+-		", si_pid=%d, si_uid=%u, si_status=%d"
++		", si_pid=%d, si_uid=%d, si_status=%d"
+ 		", si_utime=%llu, si_stime=%llu} ---\n",
+ 		sinfo.si_pid, sinfo.si_uid, sinfo.si_status,
+ 		zero_extend_signed_to_ull(sinfo.si_utime),
+@@ -94,7 +94,7 @@
+ 
+ 	sigsuspend(&unblock_mask);
+ 	tprintf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_KILLED"
+-		", si_pid=%d, si_uid=%u, si_status=SIGUSR1"
++		", si_pid=%d, si_uid=%d, si_status=SIGUSR1"
+ 		", si_utime=%llu, si_stime=%llu} ---\n",
+ 		sinfo.si_pid, sinfo.si_uid,
+ 		zero_extend_signed_to_ull(sinfo.si_utime),
+@@ -121,7 +121,7 @@
+ 
+ 	sigsuspend(&unblock_mask);
+ 	tprintf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_STOPPED"
+-		", si_pid=%d, si_uid=%u, si_status=SIGSTOP"
++		", si_pid=%d, si_uid=%d, si_status=SIGSTOP"
+ 		", si_utime=%llu, si_stime=%llu} ---\n",
+ 		sinfo.si_pid, sinfo.si_uid,
+ 		zero_extend_signed_to_ull(sinfo.si_utime),
+@@ -131,7 +131,7 @@
+ 
+ 	sigsuspend(&unblock_mask);
+ 	tprintf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_CONTINUED"
+-		", si_pid=%d, si_uid=%u, si_status=SIGCONT"
++		", si_pid=%d, si_uid=%d, si_status=SIGCONT"
+ 		", si_utime=%llu, si_stime=%llu} ---\n",
+ 		sinfo.si_pid, sinfo.si_uid,
+ 		zero_extend_signed_to_ull(sinfo.si_utime),
+@@ -142,7 +142,7 @@
+ 
+ 	sigsuspend(&unblock_mask);
+ 	tprintf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED"
+-		", si_pid=%d, si_uid=%u, si_status=0"
++		", si_pid=%d, si_uid=%d, si_status=0"
+ 		", si_utime=%llu, si_stime=%llu} ---\n",
+ 		sinfo.si_pid, sinfo.si_uid,
+ 		zero_extend_signed_to_ull(sinfo.si_utime),
+Index: strace-5.7/tests-m32/waitid.c
+===================================================================
+--- strace-5.7.orig/tests-m32/waitid.c	2020-04-19 03:22:29.000000000 +0200
++++ strace-5.7/tests-m32/waitid.c	2020-09-09 14:59:07.371039329 +0200
+@@ -103,8 +103,8 @@
+ 	snprintf(buf, sizeof(buf),
+ 		 "{si_signo=SIGCHLD"
+ 		 ", si_code=%s"
+-		 ", si_pid=%u"
+-		 ", si_uid=%u"
++		 ", si_pid=%d"
++		 ", si_uid=%d"
+ 		 ", si_status=%s"
+ 		 ", si_utime=%llu"
+ 		 ", si_stime=%llu}",
+Index: strace-5.7/tests-mx32/clone_ptrace.c
+===================================================================
+--- strace-5.7.orig/tests-mx32/clone_ptrace.c	2020-04-04 00:58:26.000000000 +0200
++++ strace-5.7/tests-mx32/clone_ptrace.c	2020-09-09 14:59:06.978039095 +0200
+@@ -96,7 +96,7 @@
+ 		error_msg_and_fail("unexpected child exit status %d", status);
+ 
+ 	printf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_KILLED, si_pid=%d"
+-	       ", si_uid=%u, si_status=%s, si_utime=%u, si_stime=%u} ---\n"
++	       ", si_uid=%d, si_status=%s, si_utime=%u, si_stime=%u} ---\n"
+ #if !QUIET_EXIT
+ 	       "+++ exited with 0 +++\n"
+ #endif
+Index: strace-5.7/tests-mx32/orphaned_process_group.c
+===================================================================
+--- strace-5.7.orig/tests-mx32/orphaned_process_group.c	2019-03-06 17:02:38.000000000 +0100
++++ strace-5.7/tests-mx32/orphaned_process_group.c	2020-09-09 14:59:07.046039135 +0200
+@@ -139,7 +139,7 @@
+ 	 */
+ 	leader = getpid();
+ 	printf("%-5d --- %s {si_signo=%s, si_code=SI_TKILL"
+-	       ", si_pid=%d, si_uid=%u} ---\n",
++	       ", si_pid=%d, si_uid=%d} ---\n",
+ 	       stopped, "SIGSTOP", "SIGSTOP", stopped, geteuid());
+ 	printf("%-5d --- stopped by SIGSTOP ---\n", stopped);
+ 	printf("%-5d +++ exited with 0 +++\n", leader);
+Index: strace-5.7/tests-mx32/pidfd_send_signal.c
+===================================================================
+--- strace-5.7.orig/tests-mx32/pidfd_send_signal.c	2019-08-14 13:22:32.000000000 +0200
++++ strace-5.7/tests-mx32/pidfd_send_signal.c	2020-09-09 14:59:07.110039174 +0200
+@@ -54,7 +54,7 @@
+ 
+ 	sys_pidfd_send_signal(fd, SIGUSR2, si, -1);
+ 	printf("pidfd_send_signal(%d, SIGUSR2, {si_signo=SIGUSR1"
+-	       ", si_code=SI_QUEUE, si_errno=%u, si_pid=%u, si_uid=%u"
++	       ", si_code=SI_QUEUE, si_errno=%u, si_pid=%d, si_uid=%d"
+ 	       ", si_value={int=%d, ptr=%p}}, %#x) = %s\n",
+ 	       fd, si->si_errno, si->si_pid, si->si_uid, si->si_int, si->si_ptr,
+ 	       -1U, errstr);
+Index: strace-5.7/tests-mx32/ptrace.c
+===================================================================
+--- strace-5.7.orig/tests-mx32/ptrace.c	2019-09-25 03:02:03.000000000 +0200
++++ strace-5.7/tests-mx32/ptrace.c	2020-09-09 14:59:07.174039212 +0200
+@@ -127,16 +127,16 @@
+ 			printf("ptrace(PTRACE_PEEKSIGINFO, %u"
+ 			       ", {off=%llu, flags=0, nr=%u}"
+ 			       ", [{si_signo=SIGUSR1, si_code=SI_TKILL"
+-			       ", si_pid=%u, si_uid=%u}"
++			       ", si_pid=%d, si_uid=%d}"
+ 			       ", {si_signo=SIGUSR2, si_code=SI_TKILL"
+-			       ", si_pid=%u, si_uid=%u}"
++			       ", si_pid=%d, si_uid=%d}"
+ 			       ", {si_signo=SIGALRM, si_code=SI_TKILL"
+-			       ", si_pid=%u, si_uid=%u}"
++			       ", si_pid=%d, si_uid=%d}"
+ 			       "]) = %s\n",
+ 			       (unsigned) pid, psi->off, psi->nr,
+-			       (unsigned) pid, (unsigned) uid,
+-			       (unsigned) pid, (unsigned) uid,
+-			       (unsigned) pid, (unsigned) uid,
++			       (int) pid, (int) uid,
++			       (int) pid, (int) uid,
++			       (int) pid, (int) uid,
+ 			       errstr);
+ 		}
+ 
+Index: strace-5.7/tests-mx32/rt_sigqueueinfo.c
+===================================================================
+--- strace-5.7.orig/tests-mx32/rt_sigqueueinfo.c	2018-12-25 00:46:43.000000000 +0100
++++ strace-5.7/tests-mx32/rt_sigqueueinfo.c	2020-09-09 14:59:07.232039246 +0200
+@@ -27,7 +27,7 @@
+ 	if (sigqueue(pid, SIGUSR1, value))
+ 		perror_msg_and_skip("sigqueue");
+ 	printf("rt_sigqueueinfo(%u, SIGUSR1, {si_signo=SIGUSR1, "
+-		"si_code=SI_QUEUE, si_pid=%u, si_uid=%u, "
++		"si_code=SI_QUEUE, si_pid=%d, si_uid=%d, "
+ 		"si_value={int=%d, ptr=%p}}) = 0\n",
+ 		pid, pid, getuid(), value.sival_int, value.sival_ptr);
+ 	printf("+++ exited with 0 +++\n");
+Index: strace-5.7/tests-mx32/rt_tgsigqueueinfo.c
+===================================================================
+--- strace-5.7.orig/tests-mx32/rt_tgsigqueueinfo.c	2019-09-25 03:02:03.000000000 +0200
++++ strace-5.7/tests-mx32/rt_tgsigqueueinfo.c	2020-09-09 14:59:07.284039277 +0200
+@@ -53,8 +53,8 @@
+ 			"rt_tgsigqueueinfo");
+ 
+ 	printf("rt_tgsigqueueinfo(%u, %u, %s, {si_signo=%s"
+-		", si_code=SI_QUEUE, si_errno=ENOENT, si_pid=%u"
+-		", si_uid=%u, si_value={int=%d, ptr=%p}}) = 0\n",
++		", si_code=SI_QUEUE, si_errno=ENOENT, si_pid=%d"
++		", si_uid=%d, si_value={int=%d, ptr=%p}}) = 0\n",
+ 		info->si_pid, info->si_pid, "SIGUSR1", "SIGUSR1",
+ 		info->si_pid, info->si_uid, info->si_value.sival_int,
+ 		info->si_value.sival_ptr);
+Index: strace-5.7/tests-mx32/siginfo.c
+===================================================================
+--- strace-5.7.orig/tests-mx32/siginfo.c	2018-12-25 00:46:43.000000000 +0100
++++ strace-5.7/tests-mx32/siginfo.c	2020-09-09 14:59:07.338039310 +0200
+@@ -63,7 +63,7 @@
+ 
+ 	sigsuspend(&unblock_mask);
+ 	tprintf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED"
+-		", si_pid=%d, si_uid=%u, si_status=%d"
++		", si_pid=%d, si_uid=%d, si_status=%d"
+ 		", si_utime=%llu, si_stime=%llu} ---\n",
+ 		sinfo.si_pid, sinfo.si_uid, sinfo.si_status,
+ 		zero_extend_signed_to_ull(sinfo.si_utime),
+@@ -94,7 +94,7 @@
+ 
+ 	sigsuspend(&unblock_mask);
+ 	tprintf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_KILLED"
+-		", si_pid=%d, si_uid=%u, si_status=SIGUSR1"
++		", si_pid=%d, si_uid=%d, si_status=SIGUSR1"
+ 		", si_utime=%llu, si_stime=%llu} ---\n",
+ 		sinfo.si_pid, sinfo.si_uid,
+ 		zero_extend_signed_to_ull(sinfo.si_utime),
+@@ -121,7 +121,7 @@
+ 
+ 	sigsuspend(&unblock_mask);
+ 	tprintf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_STOPPED"
+-		", si_pid=%d, si_uid=%u, si_status=SIGSTOP"
++		", si_pid=%d, si_uid=%d, si_status=SIGSTOP"
+ 		", si_utime=%llu, si_stime=%llu} ---\n",
+ 		sinfo.si_pid, sinfo.si_uid,
+ 		zero_extend_signed_to_ull(sinfo.si_utime),
+@@ -131,7 +131,7 @@
+ 
+ 	sigsuspend(&unblock_mask);
+ 	tprintf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_CONTINUED"
+-		", si_pid=%d, si_uid=%u, si_status=SIGCONT"
++		", si_pid=%d, si_uid=%d, si_status=SIGCONT"
+ 		", si_utime=%llu, si_stime=%llu} ---\n",
+ 		sinfo.si_pid, sinfo.si_uid,
+ 		zero_extend_signed_to_ull(sinfo.si_utime),
+@@ -142,7 +142,7 @@
+ 
+ 	sigsuspend(&unblock_mask);
+ 	tprintf("--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED"
+-		", si_pid=%d, si_uid=%u, si_status=0"
++		", si_pid=%d, si_uid=%d, si_status=0"
+ 		", si_utime=%llu, si_stime=%llu} ---\n",
+ 		sinfo.si_pid, sinfo.si_uid,
+ 		zero_extend_signed_to_ull(sinfo.si_utime),
+Index: strace-5.7/tests-mx32/waitid.c
+===================================================================
+--- strace-5.7.orig/tests-mx32/waitid.c	2020-04-19 03:22:29.000000000 +0200
++++ strace-5.7/tests-mx32/waitid.c	2020-09-09 14:59:07.398039345 +0200
+@@ -103,8 +103,8 @@
+ 	snprintf(buf, sizeof(buf),
+ 		 "{si_signo=SIGCHLD"
+ 		 ", si_code=%s"
+-		 ", si_pid=%u"
+-		 ", si_uid=%u"
++		 ", si_pid=%d"
++		 ", si_uid=%d"
+ 		 ", si_status=%s"
+ 		 ", si_utime=%llu"
+ 		 ", si_stime=%llu}",

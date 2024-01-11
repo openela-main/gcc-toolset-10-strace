@@ -1,0 +1,1212 @@
+From 4d1964761ad04028a0e6288821ee0feef5ca8fc1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=C3=81kos=20Uzonyi?= <uzonyi.akos@gmail.com>
+Date: Wed, 10 Jun 2020 13:18:50 +0200
+Subject: [PATCH 135/138] Use printpid in decoders
+
+* getpid.c: New file.
+* Makefile.am (libstrace_a_SOURCES): Add it.
+* linux/dummy.h (sys_getpid, sys_getppid, sys_gettid,
+sys_setpgid, sys_setpgrp): Remove.
+* util.c (printfd_pid_tracee_ns): Implement using translate_pid.
+* defs.h (printnum_pid): New function definition.
+(printfd_pid_tracee_ns): Update documentation
+* util.c: (printnum_pid): New function.
+* print_fields.h (PRINT_FIELD_TID): New macro.
+(PRINT_FIELD_TGID): Likewise.
+(PRINT_FIELD_PGID): Likewise.
+(PRINT_FIELD_SID): Likewise.
+* affinity.c: Print PIDs with printpid.
+* block.c: Likewise.
+* bpf.c: Likewise.
+* capability.c: Likewise.
+* clone.c: Likewise.
+* fcntl.c: Likewise.
+* get_robust_list.c: Likewise.
+* ioprio.c: Likewise.
+* kcmp.c: Likewise.
+* msghdr.c: Likewise.
+* net.c: Likewise.
+* netlink.c: Likewise.
+* numa.c: Likewise.
+* pidfd_open.c: Likewise.
+* printsiginfo.c: Likewise.
+* process.c: Likewise.
+* process_vm.c: Likewise.
+* resource.c: Likewise.
+* sched.c: Likewise.
+* signal.c: Likewise.
+* sockaddr.c: Likewise.
+* wait.c: Likewise.
+* kcmp.c (SYS_FUNC(kcmp)): Fix KCMP_FILE pid arguments.
+* tests/kcmp.c (printpidfd): Print path if VERBOSE_FD.
+(main): Use our real pid if real fds are used.
+---
+ Makefile.am       |  1 +
+ affinity.c        |  6 ++++--
+ block.c           |  2 +-
+ bpf.c             |  2 +-
+ capability.c      |  4 +++-
+ clone.c           | 14 +++++++-------
+ defs.h            |  5 ++++-
+ fcntl.c           | 24 ++++++++++++++++++++++--
+ get_robust_list.c |  3 ++-
+ getpid.c          | 46 ++++++++++++++++++++++++++++++++++++++++++++++
+ ioprio.c          | 26 ++++++++++++++++++++++----
+ ipc_shmctl.c      |  4 ++--
+ kcmp.c            |  5 ++++-
+ linux/dummy.h     |  8 +-------
+ msghdr.c          |  2 +-
+ net.c             |  2 +-
+ netlink.c         |  5 +++--
+ numa.c            |  6 ++++--
+ pidfd_open.c      |  2 +-
+ print_fields.h    | 24 ++++++++++++++++++++++++
+ printsiginfo.c    |  2 +-
+ process.c         |  3 ++-
+ process_vm.c      |  6 ++++--
+ resource.c        | 27 ++++++++++++++++++++++++---
+ sched.c           | 25 ++++++++++++++++---------
+ signal.c          | 21 +++++++++++++++------
+ sockaddr.c        |  2 +-
+ tests/kcmp.c      | 25 ++++++++++++++++++++++---
+ util.c            | 22 +++++++++++++++-------
+ wait.c            | 36 ++++++++++++++++++++++++------------
+ 30 files changed, 278 insertions(+), 82 deletions(-)
+ create mode 100644 getpid.c
+
+Index: strace-5.7/Makefile.am
+===================================================================
+--- strace-5.7.orig/Makefile.am	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/Makefile.am	2020-09-09 18:49:06.780401433 +0200
+@@ -135,6 +135,7 @@
+ 	getcpu.c	\
+ 	getcwd.c	\
+ 	getpagesize.c \
++	getpid.c	\
+ 	getrandom.c	\
+ 	hdio.c		\
+ 	hostname.c	\
+Index: strace-5.7/affinity.c
+===================================================================
+--- strace-5.7.orig/affinity.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/affinity.c	2020-09-09 15:55:03.979108297 +0200
+@@ -82,7 +82,8 @@
+ 	const int pid = tcp->u_arg[0];
+ 	const unsigned int len = tcp->u_arg[1];
+ 
+-	tprintf("%d, %u, ", pid, len);
++	printpid(tcp, pid, PT_TGID);
++	tprintf(", %u, ", len);
+ 	print_affinitylist(tcp, tcp->u_arg[2], len);
+ 
+ 	return RVAL_DECODED;
+@@ -94,7 +95,8 @@
+ 	const unsigned int len = tcp->u_arg[1];
+ 
+ 	if (entering(tcp)) {
+-		tprintf("%d, %u, ", pid, len);
++		printpid(tcp, pid, PT_TGID);
++		tprintf(", %u, ", len);
+ 	} else {
+ 		print_affinitylist(tcp, tcp->u_arg[2], tcp->u_rval);
+ 	}
+Index: strace-5.7/block.c
+===================================================================
+--- strace-5.7.orig/block.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/block.c	2020-09-09 15:55:03.979108297 +0200
+@@ -179,7 +179,7 @@
+ 			PRINT_FIELD_U(", ", buts, buf_nr);
+ 			PRINT_FIELD_U(", ", buts, start_lba);
+ 			PRINT_FIELD_U(", ", buts, end_lba);
+-			PRINT_FIELD_D(", ", buts, pid);
++			PRINT_FIELD_TGID(", ", buts, pid, tcp);
+ 			return 0;
+ 		} else {
+ 			struct_blk_user_trace_setup buts;
+Index: strace-5.7/bpf.c
+===================================================================
+--- strace-5.7.orig/bpf.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/bpf.c	2020-09-09 15:55:03.980108298 +0200
+@@ -927,7 +927,7 @@
+ 	if (entering(tcp)) {
+ 		set_tcb_priv_ulong(tcp, attr.buf_len);
+ 
+-		PRINT_FIELD_D("{task_fd_query={", attr, pid);
++		PRINT_FIELD_TGID("{task_fd_query={", attr, pid, tcp);
+ 		PRINT_FIELD_FD(", ", attr, fd, tcp);
+ 		PRINT_FIELD_U(", ", attr, flags);
+ 		PRINT_FIELD_U(", ", attr, buf_len);
+Index: strace-5.7/capability.c
+===================================================================
+--- strace-5.7.orig/capability.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/capability.c	2020-09-09 15:55:03.980108298 +0200
+@@ -70,7 +70,9 @@
+ 	tprints("{version=");
+ 	printxval(cap_version, h->version,
+ 		  "_LINUX_CAPABILITY_VERSION_???");
+-	tprintf(", pid=%d}", h->pid);
++	tprints(", pid=");
++	printpid(tcp, h->pid, PT_TGID);
++	tprints("}");
+ }
+ 
+ static void
+Index: strace-5.7/clone.c
+===================================================================
+--- strace-5.7.orig/clone.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/clone.c	2020-09-09 15:55:03.980108298 +0200
+@@ -114,14 +114,14 @@
+ 		 */
+ 		if ((flags & (CLONE_PARENT_SETTID|CLONE_PIDFD|CLONE_CHILD_SETTID
+ 			      |CLONE_CHILD_CLEARTID|CLONE_SETTLS)) == 0)
+-			return RVAL_DECODED;
++			return RVAL_DECODED | RVAL_TID;
+ 	} else {
+ 		if (flags & (CLONE_PARENT_SETTID|CLONE_PIDFD)) {
+ 			kernel_ulong_t addr = tcp->u_arg[ARG_PTID];
+ 
+ 			tprints(", parent_tid=");
+ 			if (flags & CLONE_PARENT_SETTID)
+-				printnum_int(tcp, addr, "%u");
++				printnum_pid(tcp, addr, PT_TID);
+ 			else
+ 				printnum_fd(tcp, addr);
+ 		}
+@@ -134,7 +134,7 @@
+ 			printaddr(tcp->u_arg[ARG_CTID]);
+ 		}
+ 	}
+-	return 0;
++	return RVAL_TID;
+ }
+ 
+ 
+@@ -229,7 +229,7 @@
+ 
+ 		if ((arg.flags & (CLONE_PIDFD | CLONE_PARENT_SETTID)) ||
+ 		    (size > fetch_size))
+-			return 0;
++			return RVAL_TID;
+ 
+ 		goto out;
+ 	}
+@@ -256,7 +256,7 @@
+ 
+ 	if (arg.flags & CLONE_PARENT_SETTID) {
+ 		tprintf("%sparent_tid=", pfx);
+-		printnum_int(tcp, arg.parent_tid, "%d"); /* TID */
++		printnum_pid(tcp, arg.parent_tid, PT_TID);
+ 		pfx = ", ";
+ 	}
+ 
+@@ -279,7 +279,7 @@
+ out:
+ 	tprintf(", %" PRI_klu, size);
+ 
+-	return RVAL_DECODED;
++	return RVAL_DECODED | RVAL_TID;
+ }
+ 
+ 
+@@ -300,5 +300,5 @@
+ 
+ SYS_FUNC(fork)
+ {
+-	return RVAL_DECODED;
++	return RVAL_DECODED | RVAL_TGID;
+ }
+Index: strace-5.7/defs.h
+===================================================================
+--- strace-5.7.orig/defs.h	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/defs.h	2020-09-09 15:55:03.980108298 +0200
+@@ -1101,7 +1101,7 @@
+ 
+ /**
+  * Print file descriptor fd owned by process with ID pid (from the PID NS
+- * of the tracee the descriptor tcp).  This is a stub.
++ * of the tracee).
+  */
+ extern void printfd_pid_tracee_ns(struct tcb *tcp, pid_t pid, int fd);
+ 
+@@ -1562,6 +1562,9 @@
+ extern bool
+ printnum_fd(struct tcb *, kernel_ulong_t addr);
+ 
++extern bool
++printnum_pid(struct tcb *const tcp, const kernel_ulong_t addr, enum pid_type type);
++
+ static inline bool
+ printnum_slong(struct tcb *tcp, kernel_ulong_t addr)
+ {
+Index: strace-5.7/fcntl.c
+===================================================================
+--- strace-5.7.orig/fcntl.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/fcntl.c	2020-09-09 15:55:03.981108298 +0200
+@@ -28,7 +28,7 @@
+ 	PRINT_FIELD_D(", ", *fl, l_start);
+ 	PRINT_FIELD_D(", ", *fl, l_len);
+ 	if (getlk)
+-		PRINT_FIELD_D(", ", *fl, l_pid);
++		PRINT_FIELD_TGID(", ", *fl, l_pid, tcp);
+ 	tprints("}");
+ }
+ 
+@@ -59,7 +59,22 @@
+ 		return;
+ 
+ 	PRINT_FIELD_XVAL("{", owner, type, f_owner_types, "F_OWNER_???");
+-	PRINT_FIELD_D(", ", owner, pid);
++
++	enum pid_type pid_type = PT_NONE;
++	switch (owner.type)
++	{
++	case F_OWNER_TID:
++		pid_type = PT_TID;
++		break;
++	case F_OWNER_PID:
++		pid_type = PT_TGID;
++		break;
++	case F_OWNER_PGRP:
++		pid_type = PT_PGID;
++		break;
++	}
++	tprints(", pid=");
++	printpid(tcp, owner.pid, pid_type);
+ 	tprints("}");
+ }
+ 
+@@ -74,6 +89,9 @@
+ 		printflags(fdflags, tcp->u_arg[2], "FD_???");
+ 		break;
+ 	case F_SETOWN:
++		tprints(", ");
++		printpid_tgid_pgid(tcp, tcp->u_arg[2]);
++		break;
+ 	case F_SETPIPE_SZ:
+ 		tprintf(", %" PRI_kld, tcp->u_arg[2]);
+ 		break;
+@@ -116,6 +134,8 @@
+ 		printsignal(tcp->u_arg[2]);
+ 		break;
+ 	case F_GETOWN:
++		return RVAL_DECODED |
++		       ((int) tcp->u_rval < 0 ? RVAL_PGID : RVAL_TGID);
+ 	case F_GETPIPE_SZ:
+ 		break;
+ 	case F_GETFD:
+Index: strace-5.7/get_robust_list.c
+===================================================================
+--- strace-5.7.orig/get_robust_list.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/get_robust_list.c	2020-09-09 15:55:03.981108298 +0200
+@@ -10,7 +10,8 @@
+ SYS_FUNC(get_robust_list)
+ {
+ 	if (entering(tcp)) {
+-		tprintf("%d, ", (int) tcp->u_arg[0]);
++		printpid(tcp, tcp->u_arg[0], PT_TID);
++		tprints(", ");
+ 	} else {
+ 		printnum_ptr(tcp, tcp->u_arg[1]);
+ 		tprints(", ");
+Index: strace-5.7/getpid.c
+===================================================================
+--- /dev/null	1970-01-01 00:00:00.000000000 +0000
++++ strace-5.7/getpid.c	2020-09-09 15:55:03.981108298 +0200
+@@ -0,0 +1,46 @@
++/*
++ * Copyright (c) 2020 Ákos Uzonyi <uzonyi.akos@gmail.com>
++ * All rights reserved.
++ *
++ * SPDX-License-Identifier: LGPL-2.1-or-later
++ */
++
++#include "defs.h"
++
++SYS_FUNC(getpid)
++{
++	return RVAL_DECODED | RVAL_TGID;
++}
++
++SYS_FUNC(gettid)
++{
++	return RVAL_DECODED | RVAL_TID;
++}
++
++SYS_FUNC(getpgrp)
++{
++	return RVAL_DECODED | RVAL_PGID;
++}
++
++SYS_FUNC(getpgid)
++{
++	printpid(tcp, tcp->u_arg[0], PT_TGID);
++
++	return RVAL_DECODED | RVAL_PGID;
++}
++
++SYS_FUNC(getsid)
++{
++	printpid(tcp, tcp->u_arg[0], PT_TGID);
++
++	return RVAL_DECODED | RVAL_SID;
++}
++
++SYS_FUNC(setpgid)
++{
++	printpid(tcp, tcp->u_arg[0], PT_TGID);
++	tprints(", ");
++	printpid(tcp, tcp->u_arg[1], PT_PGID);
++
++	return RVAL_DECODED;
++}
+Index: strace-5.7/ioprio.c
+===================================================================
+--- strace-5.7.orig/ioprio.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/ioprio.c	2020-09-09 15:55:03.981108298 +0200
+@@ -49,13 +49,30 @@
+ 		? tprints_comment : tprints)(str);
+ }
+ 
++static void
++ioprio_print_who(struct tcb *tcp, int which, int who)
++{
++	switch (which)
++	{
++	case IOPRIO_WHO_PROCESS:
++		printpid(tcp, who, PT_TGID);
++		break;
++	case IOPRIO_WHO_PGRP:
++		printpid(tcp, who, PT_PGID);
++		break;
++	default:
++		tprintf("%d", who);
++		break;
++	}
++}
++
+ SYS_FUNC(ioprio_get)
+ {
+ 	if (entering(tcp)) {
+ 		/* int which */
+ 		printxval(ioprio_who, tcp->u_arg[0], "IOPRIO_WHO_???");
+-		/* int who */
+-		tprintf(", %d", (int) tcp->u_arg[1]);
++		tprints(", ");
++		ioprio_print_who(tcp, tcp->u_arg[0], tcp->u_arg[1]);
+ 		return 0;
+ 	} else {
+ 		if (syserror(tcp))
+@@ -72,8 +89,9 @@
+ {
+ 	/* int which */
+ 	printxval(ioprio_who, tcp->u_arg[0], "IOPRIO_WHO_???");
+-	/* int who */
+-	tprintf(", %d, ", (int) tcp->u_arg[1]);
++	tprints(", ");
++	ioprio_print_who(tcp, tcp->u_arg[0], tcp->u_arg[1]);
++	tprints(", ");
+ 	/* int ioprio */
+ 	if (xlat_verbose(xlat_verbosity) != XLAT_STYLE_ABBREV)
+ 		tprintf("%d", (int) tcp->u_arg[2]);
+Index: strace-5.7/ipc_shmctl.c
+===================================================================
+--- strace-5.7.orig/ipc_shmctl.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/ipc_shmctl.c	2020-09-09 15:55:03.981108298 +0200
+@@ -54,8 +54,8 @@
+ 		PRINT_FIELD_UID(", ", shmid_ds.shm_perm, cgid);
+ 		tprints("}");
+ 		tprintf(", shm_segsz=%u", (unsigned) shmid_ds.shm_segsz);
+-		PRINT_FIELD_D(", ", shmid_ds, shm_cpid);
+-		PRINT_FIELD_D(", ", shmid_ds, shm_lpid);
++		PRINT_FIELD_TGID(", ", shmid_ds, shm_cpid, tcp);
++		PRINT_FIELD_TGID(", ", shmid_ds, shm_lpid, tcp);
+ 		tprintf(", shm_nattch=%u", (unsigned) shmid_ds.shm_nattch);
+ 		tprintf(", shm_atime=%u", (unsigned) shmid_ds.shm_atime);
+ 		tprintf(", shm_dtime=%u", (unsigned) shmid_ds.shm_dtime);
+Index: strace-5.7/kcmp.c
+===================================================================
+--- strace-5.7.orig/kcmp.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/kcmp.c	2020-09-09 15:55:03.981108298 +0200
+@@ -30,7 +30,10 @@
+ 	kernel_ulong_t idx1 = tcp->u_arg[3];
+ 	kernel_ulong_t idx2 = tcp->u_arg[4];
+ 
+-	tprintf("%d, %d, ", pid1, pid2);
++	printpid(tcp, pid1, PT_TGID);
++	tprints(", ");
++	printpid(tcp, pid2, PT_TGID);
++	tprints(", ");
+ 	printxval(kcmp_types, type, "KCMP_???");
+ 
+ 	switch (type) {
+Index: strace-5.7/linux/dummy.h
+===================================================================
+--- strace-5.7.orig/linux/dummy.h	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/linux/dummy.h	2020-09-09 15:55:03.982108299 +0200
+@@ -53,6 +53,7 @@
+ # define sys_getgid		sys_getuid
+ # define sys_getgid16		sys_getuid16
+ # define sys_getpeername		sys_getsockname
++# define sys_getppid		sys_getpid
+ # define sys_getresgid		sys_getresuid
+ # define sys_getresgid16		sys_getresuid16
+ # define sys_lstat		sys_stat
+@@ -87,10 +88,6 @@
+ # define sys_vfork		sys_fork
+ 
+ /* printargs does the right thing */
+-# define sys_getpgrp		printargs
+-# define sys_getpid		printargs
+-# define sys_getppid		printargs
+-# define sys_gettid		printargs
+ # define sys_idle		printargs
+ # define sys_munlockall		printargs
+ # define sys_pause		printargs
+@@ -108,10 +105,7 @@
+ 
+ /* printargs_d does the right thing */
+ # define sys_exit		printargs_d
+-# define sys_getpgid		printargs_d
+-# define sys_getsid		printargs_d
+ # define sys_nice		printargs_d
+-# define sys_setpgid		printargs_d
+ # define sys_setpgrp		printargs_d
+ # define sys_timer_delete	printargs_d
+ # define sys_timer_getoverrun	printargs_d
+Index: strace-5.7/msghdr.c
+===================================================================
+--- strace-5.7.orig/msghdr.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/msghdr.c	2020-09-09 15:55:03.982108299 +0200
+@@ -69,7 +69,7 @@
+ {
+ 	const struct ucred *uc = cmsg_data;
+ 
+-	PRINT_FIELD_D("{", *uc, pid);
++	PRINT_FIELD_TGID("{", *uc, pid, tcp);
+ 	PRINT_FIELD_UID(", ", *uc, uid);
+ 	PRINT_FIELD_UID(", ", *uc, gid);
+ 	tprints("}");
+Index: strace-5.7/net.c
+===================================================================
+--- strace-5.7.orig/net.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/net.c	2020-09-09 15:55:03.982108299 +0200
+@@ -601,7 +601,7 @@
+ 	if (umoven_or_printaddr(tcp, addr, len, &uc))
+ 		return;
+ 
+-	PRINT_FIELD_LEN("{", uc, pid, len, PRINT_FIELD_D);
++	PRINT_FIELD_LEN("{", uc, pid, len, PRINT_FIELD_TGID, tcp);
+ 	PRINT_FIELD_LEN(", ", uc, uid, len, PRINT_FIELD_UID);
+ 	PRINT_FIELD_LEN(", ", uc, gid, len, PRINT_FIELD_UID);
+ 	tprints("}");
+Index: strace-5.7/netlink.c
+===================================================================
+--- strace-5.7.orig/netlink.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/netlink.c	2020-09-09 15:55:03.982108299 +0200
+@@ -446,8 +446,9 @@
+ 	decode_nlmsg_flags(nlmsghdr->nlmsg_flags,
+ 			   nlmsghdr->nlmsg_type, family);
+ 
+-	tprintf(", seq=%u, pid=%d}", nlmsghdr->nlmsg_seq,
+-		nlmsghdr->nlmsg_pid);
++	tprintf(", seq=%u, pid=", nlmsghdr->nlmsg_seq);
++	printpid(tcp, nlmsghdr->nlmsg_pid, PT_TGID);
++	tprints("}");
+ }
+ 
+ static bool
+Index: strace-5.7/numa.c
+===================================================================
+--- strace-5.7.orig/numa.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/numa.c	2020-09-09 15:55:03.982108299 +0200
+@@ -44,7 +44,8 @@
+ 
+ SYS_FUNC(migrate_pages)
+ {
+-	tprintf("%d, %" PRI_klu ", ", (int) tcp->u_arg[0], tcp->u_arg[1]);
++	printpid(tcp, tcp->u_arg[0], PT_TGID);
++	tprintf(", %" PRI_klu ", ", tcp->u_arg[1]);
+ 	print_nodemask(tcp, tcp->u_arg[2], tcp->u_arg[1]);
+ 	tprints(", ");
+ 	print_nodemask(tcp, tcp->u_arg[3], tcp->u_arg[1]);
+@@ -170,7 +171,8 @@
+ 	kernel_ulong_t buf;
+ 
+ 	if (entering(tcp)) {
+-		tprintf("%d, %" PRI_klu ", ", (int) tcp->u_arg[0], npages);
++		printpid(tcp, tcp->u_arg[0], PT_TGID);
++		tprintf(", %" PRI_klu ", ", npages);
+ 		print_array(tcp, tcp->u_arg[2], npages, &buf, current_wordsize,
+ 			    tfetch_mem, print_addr, 0);
+ 		tprints(", ");
+Index: strace-5.7/pidfd_open.c
+===================================================================
+--- strace-5.7.orig/pidfd_open.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/pidfd_open.c	2020-09-09 15:55:03.983108300 +0200
+@@ -10,7 +10,7 @@
+ SYS_FUNC(pidfd_open)
+ {
+ 	/* pid_t pid */
+-	tprintf("%d", (int) tcp->u_arg[0]);
++	printpid(tcp, tcp->u_arg[0], PT_TGID);
+ 
+ 	/* unsigned int flags */
+ 	tprintf(", %#x", (unsigned int) tcp->u_arg[1]);
+Index: strace-5.7/print_fields.h
+===================================================================
+--- strace-5.7.orig/print_fields.h	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/print_fields.h	2020-09-09 15:55:03.983108300 +0200
+@@ -236,6 +236,30 @@
+ 		printfd((tcp_), (where_).field_);			\
+ 	} while (0)
+ 
++# define PRINT_FIELD_TID(prefix_, where_, field_, tcp_)			\
++	do {								\
++		STRACE_PRINTF("%s%s=", (prefix_), #field_);		\
++		printpid((tcp_), (where_).field_, PT_TID);			\
++	} while (0)
++
++# define PRINT_FIELD_TGID(prefix_, where_, field_, tcp_)			\
++	do {								\
++		STRACE_PRINTF("%s%s=", (prefix_), #field_);		\
++		printpid((tcp_), (where_).field_, PT_TGID);			\
++	} while (0)
++
++# define PRINT_FIELD_PGID(prefix_, where_, field_, tcp_)			\
++	do {								\
++		STRACE_PRINTF("%s%s=", (prefix_), #field_);		\
++		printpid((tcp_), (where_).field_, PT_PGID);			\
++	} while (0)
++
++# define PRINT_FIELD_SID(prefix_, where_, field_, tcp_)			\
++	do {								\
++		STRACE_PRINTF("%s%s=", (prefix_), #field_);		\
++		printpid((tcp_), (where_).field_, PT_SID);			\
++	} while (0)
++
+ # define PRINT_FIELD_STRN(prefix_, where_, field_, len_, tcp_)		\
+ 	do {								\
+ 		STRACE_PRINTF("%s%s=", (prefix_), #field_);		\
+Index: strace-5.7/printsiginfo.c
+===================================================================
+--- strace-5.7.orig/printsiginfo.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/printsiginfo.c	2020-09-09 15:55:03.983108300 +0200
+@@ -58,7 +58,7 @@
+ static void
+ printsigsource(struct tcb *tcp, const siginfo_t *sip)
+ {
+-	PRINT_FIELD_D(", ", *sip, si_pid);
++	PRINT_FIELD_TGID(", ", *sip, si_pid, tcp);
+ 	PRINT_FIELD_UID(", ", *sip, si_uid);
+ }
+ 
+Index: strace-5.7/process.c
+===================================================================
+--- strace-5.7.orig/process.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/process.c	2020-09-09 15:55:03.983108300 +0200
+@@ -92,7 +92,8 @@
+ 		}
+ 
+ 		/* pid */
+-		tprintf(", %d", pid);
++		tprints(", ");
++		printpid(tcp, pid, PT_TGID);
+ 
+ 		/* addr */
+ 		switch (request) {
+Index: strace-5.7/process_vm.c
+===================================================================
+--- strace-5.7.orig/process_vm.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/process_vm.c	2020-09-09 15:55:03.983108300 +0200
+@@ -13,7 +13,8 @@
+ {
+ 	if (entering(tcp)) {
+ 		/* arg 1: pid */
+-		tprintf("%d, ", (int) tcp->u_arg[0]);
++		printpid(tcp, tcp->u_arg[0], PT_TGID);
++		tprints(", ");
+ 	} else {
+ 		kernel_ulong_t local_iovcnt = tcp->u_arg[2];
+ 		kernel_ulong_t remote_iovcnt = tcp->u_arg[4];
+@@ -42,7 +43,8 @@
+ 	kernel_ulong_t flags = tcp->u_arg[5];
+ 
+ 	/* arg 1: pid */
+-	tprintf("%d, ", (int) tcp->u_arg[0]);
++	printpid(tcp, tcp->u_arg[0], PT_TGID);
++	tprints(", ");
+ 	/* arg 2: local iov */
+ 	tprint_iov(tcp, local_iovcnt, tcp->u_arg[1], IOV_DECODE_STR);
+ 	/* arg 3: local iovcnt */
+Index: strace-5.7/resource.c
+===================================================================
+--- strace-5.7.orig/resource.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/resource.c	2020-09-09 15:55:03.984108300 +0200
+@@ -142,7 +142,8 @@
+ SYS_FUNC(prlimit64)
+ {
+ 	if (entering(tcp)) {
+-		tprintf("%d, ", (int) tcp->u_arg[0]);
++		printpid(tcp, tcp->u_arg[0], PT_TGID);
++		tprints(", ");
+ 		printxval(resources, tcp->u_arg[1], "RLIMIT_???");
+ 		tprints(", ");
+ 		print_rlimit64(tcp, tcp->u_arg[2]);
+@@ -179,10 +180,28 @@
+ 
+ #include "xlat/priorities.h"
+ 
++static void
++priority_print_who(struct tcb *tcp, int which, int who)
++{
++	switch (which)
++	{
++	case PRIO_PROCESS:
++		printpid(tcp, who, PT_TGID);
++		break;
++	case PRIO_PGRP:
++		printpid(tcp, who, PT_PGID);
++		break;
++	default:
++		tprintf("%d", who);
++		break;
++	}
++}
++
+ SYS_FUNC(getpriority)
+ {
+ 	printxval(priorities, tcp->u_arg[0], "PRIO_???");
+-	tprintf(", %d", (int) tcp->u_arg[1]);
++	tprints(", ");
++	priority_print_who(tcp, tcp->u_arg[0], tcp->u_arg[1]);
+ 
+ 	return RVAL_DECODED;
+ }
+@@ -190,7 +209,9 @@
+ SYS_FUNC(setpriority)
+ {
+ 	printxval(priorities, tcp->u_arg[0], "PRIO_???");
+-	tprintf(", %d, %d", (int) tcp->u_arg[1], (int) tcp->u_arg[2]);
++	tprints(", ");
++	priority_print_who(tcp, tcp->u_arg[0], tcp->u_arg[1]);
++	tprintf(", %d", (int) tcp->u_arg[2]);
+ 
+ 	return RVAL_DECODED;
+ }
+Index: strace-5.7/sched.c
+===================================================================
+--- strace-5.7.orig/sched.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/sched.c	2020-09-09 15:55:03.984108300 +0200
+@@ -21,7 +21,7 @@
+ SYS_FUNC(sched_getscheduler)
+ {
+ 	if (entering(tcp)) {
+-		tprintf("%d", (int) tcp->u_arg[0]);
++		printpid(tcp, tcp->u_arg[0], PT_TGID);
+ 	} else if (!syserror(tcp)) {
+ 		tcp->auxstr = xlookup(schedulers, (kernel_ulong_t) tcp->u_rval);
+ 		return RVAL_STR;
+@@ -31,7 +31,8 @@
+ 
+ SYS_FUNC(sched_setscheduler)
+ {
+-	tprintf("%d, ", (int) tcp->u_arg[0]);
++	printpid(tcp, tcp->u_arg[0], PT_TGID);
++	tprints(", ");
+ 	printxval(schedulers, tcp->u_arg[1], "SCHED_???");
+ 	tprints(", ");
+ 	printnum_int(tcp, tcp->u_arg[2], "%d");
+@@ -41,16 +42,19 @@
+ 
+ SYS_FUNC(sched_getparam)
+ {
+-	if (entering(tcp))
+-		tprintf("%d, ", (int) tcp->u_arg[0]);
+-	else
++	if (entering(tcp)) {
++		printpid(tcp, tcp->u_arg[0], PT_TGID);
++		tprints(", ");
++	} else {
+ 		printnum_int(tcp, tcp->u_arg[1], "%d");
++	}
+ 	return 0;
+ }
+ 
+ SYS_FUNC(sched_setparam)
+ {
+-	tprintf("%d, ", (int) tcp->u_arg[0]);
++	printpid(tcp, tcp->u_arg[0], PT_TGID);
++	tprints(", ");
+ 	printnum_int(tcp, tcp->u_arg[1], "%d");
+ 
+ 	return RVAL_DECODED;
+@@ -68,7 +72,8 @@
+ 			 const print_obj_by_addr_fn print_ts)
+ {
+ 	if (entering(tcp)) {
+-		tprintf("%d, ", (int) tcp->u_arg[0]);
++		printpid(tcp, tcp->u_arg[0], PT_TGID);
++		tprints(", ");
+ 	} else {
+ 		if (syserror(tcp))
+ 			printaddr(tcp->u_arg[1]);
+@@ -160,7 +165,8 @@
+ SYS_FUNC(sched_setattr)
+ {
+ 	if (entering(tcp)) {
+-		tprintf("%d, ", (int) tcp->u_arg[0]);
++		printpid(tcp, tcp->u_arg[0], PT_TGID);
++		tprints(", ");
+ 		print_sched_attr(tcp, tcp->u_arg[1], 0);
+ 	} else {
+ 		struct sched_attr attr;
+@@ -179,7 +185,8 @@
+ SYS_FUNC(sched_getattr)
+ {
+ 	if (entering(tcp)) {
+-		tprintf("%d, ", (int) tcp->u_arg[0]);
++		printpid(tcp, tcp->u_arg[0], PT_TGID);
++		tprints(", ");
+ 	} else {
+ 		const unsigned int size = tcp->u_arg[2];
+ 
+Index: strace-5.7/signal.c
+===================================================================
+--- strace-5.7.orig/signal.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/signal.c	2020-09-09 15:55:03.984108300 +0200
+@@ -439,7 +439,8 @@
+ SYS_FUNC(kill)
+ {
+ 	/* pid */
+-	tprintf("%d, ", (int) tcp->u_arg[0]);
++	printpid_tgid_pgid(tcp, tcp->u_arg[0]);
++	tprints(", ");
+ 	/* signal */
+ 	printsignal(tcp->u_arg[1]);
+ 
+@@ -448,7 +449,7 @@
+ 
+ SYS_FUNC(tkill)
+ {
+-	tprintf("%d", (int) tcp->u_arg[0]);
++	printpid(tcp, tcp->u_arg[0], PT_TID);
+ 	tprints(", ");
+ 	printsignal(tcp->u_arg[1]);
+ 
+@@ -457,8 +458,12 @@
+ 
+ SYS_FUNC(tgkill)
+ {
+-	/* tgid, tid */
+-	tprintf("%d, %d, ", (int) tcp->u_arg[0], (int) tcp->u_arg[1]);
++	/* tgid */
++	printpid(tcp, tcp->u_arg[0], PT_TGID);
++	tprints(", ");
++	/* tid */
++	printpid(tcp, tcp->u_arg[1], PT_TID);
++	tprints(", ");
+ 	/* signal */
+ 	printsignal(tcp->u_arg[2]);
+ 
+@@ -624,7 +629,8 @@
+ 
+ SYS_FUNC(rt_sigqueueinfo)
+ {
+-	tprintf("%d, ", (int) tcp->u_arg[0]);
++	printpid(tcp, tcp->u_arg[0], PT_TGID);
++	tprints(", ");
+ 	print_sigqueueinfo(tcp, tcp->u_arg[1], tcp->u_arg[2]);
+ 
+ 	return RVAL_DECODED;
+@@ -632,7 +638,10 @@
+ 
+ SYS_FUNC(rt_tgsigqueueinfo)
+ {
+-	tprintf("%d, %d, ", (int) tcp->u_arg[0], (int) tcp->u_arg[1]);
++	printpid(tcp, tcp->u_arg[0], PT_TGID);
++	tprints(", ");
++	printpid(tcp, tcp->u_arg[1], PT_TID);
++	tprints(", ");
+ 	print_sigqueueinfo(tcp, tcp->u_arg[2], tcp->u_arg[3]);
+ 
+ 	return RVAL_DECODED;
+Index: strace-5.7/sockaddr.c
+===================================================================
+--- strace-5.7.orig/sockaddr.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/sockaddr.c	2020-09-09 15:55:03.984108300 +0200
+@@ -416,7 +416,7 @@
+ {
+ 	const struct sockaddr_nl *const sa_nl = buf;
+ 
+-	PRINT_FIELD_D("", *sa_nl, nl_pid);
++	PRINT_FIELD_TGID("", *sa_nl, nl_pid, tcp);
+ 	PRINT_FIELD_0X(", ", *sa_nl, nl_groups);
+ }
+ 
+Index: strace-5.7/tests/kcmp.c
+===================================================================
+--- strace-5.7.orig/tests/kcmp.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/tests/kcmp.c	2020-09-09 18:49:06.780401433 +0200
+@@ -64,7 +64,26 @@
+ static void
+ printpidfd(const char *prefix, pid_t pid, unsigned fd)
+ {
+-	printf("%s%d", prefix, fd);
++	const char *path = NULL;
++
++# if VERBOSE_FD
++	if (pid == getpid()) {
++		switch (fd)
++		{
++		case NULL_FD:
++			path = null_path;
++			break;
++		case ZERO_FD:
++			path = zero_path;
++			break;
++		}
++	}
++# endif
++
++	if (path)
++		printf("%s%d<%s>", prefix, fd, path);
++	else
++		printf("%s%d", prefix, fd);
+ }
+ 
+ /*
+@@ -179,7 +198,7 @@
+ 	/* KCMP_FILE is the only type which has additional args */
+ 	do_kcmp(3141592653U, 2718281828U, ARG_STR(KCMP_FILE), bogus_idx1,
+ 		bogus_idx2);
+-	do_kcmp(-1, -1, ARG_STR(KCMP_FILE), NULL_FD, ZERO_FD);
++	do_kcmp(getpid(), getpid(), ARG_STR(KCMP_FILE), NULL_FD, ZERO_FD);
+ 
+ 	/* Types without additional args */
+ 	do_kcmp(-1, -1, ARG_STR(KCMP_VM), bogus_idx1, bogus_idx2);
+@@ -198,7 +217,7 @@
+ 	for (i = 0; i < ARRAY_SIZE(slot_data); i++) {
+ 		memcpy(slot, slot_data + i, sizeof(*slot));
+ 
+-		do_kcmp(getpid(), getppid(), ARG_STR(KCMP_EPOLL_TFD), NULL_FD,
++		do_kcmp(getpid(), -1, ARG_STR(KCMP_EPOLL_TFD), NULL_FD,
+ 			(uintptr_t) slot, 1);
+ 	}
+ 
+Index: strace-5.7/util.c
+===================================================================
+--- strace-5.7.orig/util.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/util.c	2020-09-09 18:49:07.951402131 +0200
+@@ -392,6 +392,18 @@
+ 	return true;
+ }
+ 
++bool
++printnum_pid(struct tcb *const tcp, const kernel_ulong_t addr, enum pid_type type)
++{
++	int pid;
++	if (umove_or_printaddr(tcp, addr, &pid))
++		return false;
++	tprints("[");
++	printpid(tcp, pid, type);
++	tprints("]");
++	return true;
++}
++
+ /**
+  * Prints time to a (static internal) buffer and returns pointer to it.
+  * Returns NULL if the provided time specification is not correct.
+@@ -616,7 +628,7 @@
+ printfd_pid(struct tcb *tcp, pid_t pid, int fd)
+ {
+ 	char path[PATH_MAX + 1];
+-	if (!number_set_array_is_empty(decode_fd_set, 0)
++	if (pid > 0 && !number_set_array_is_empty(decode_fd_set, 0)
+ 	    && getfdpath_pid(pid, fd, path, sizeof(path)) >= 0) {
+ 		tprintf("%d<", (int) fd);
+ 		if (is_number_in_set(DECODE_FD_SOCKET, decode_fd_set) &&
+@@ -641,12 +653,8 @@
+ void
+ printfd_pid_tracee_ns(struct tcb *tcp, pid_t pid, int fd)
+ {
+-	/*
+-	 * TODO: We want to have the same formatting as printfd here,
+-	 *       but we should figure out first which process in strace's
+-	 *       PID NS is referred to by pid in tracee's PID NS.
+-	 */
+-	tprintf("%d", fd);
++	int strace_pid = translate_pid(tcp, pid, PT_TGID, NULL);
++	printfd_pid(tcp, strace_pid, fd);
+ }
+ 
+ /*
+Index: strace-5.7/wait.c
+===================================================================
+--- strace-5.7.orig/wait.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/wait.c	2020-09-09 15:55:03.985108301 +0200
+@@ -80,14 +80,8 @@
+ 	   void (*const print_rusage)(struct tcb *, kernel_ulong_t))
+ {
+ 	if (entering(tcp)) {
+-		/* On Linux, kernel-side pid_t is typedef'ed to int
+-		 * on all arches. Also, glibc-2.8 truncates wait3 and wait4
+-		 * pid argument to int on 64bit arches, producing,
+-		 * for example, wait4(4294967295, ...) instead of -1
+-		 * in strace. We have to use int here, not long.
+-		 */
+-		int pid = tcp->u_arg[0];
+-		tprintf("%d, ", pid);
++		printpid_tgid_pgid(tcp, tcp->u_arg[0]);
++		tprintf(", ");
+ 	} else {
+ 		int status;
+ 
+@@ -108,7 +102,7 @@
+ 				printaddr(tcp->u_arg[3]);
+ 		}
+ 	}
+-	return 0;
++	return RVAL_TGID;
+ }
+ 
+ SYS_FUNC(waitpid)
+@@ -134,10 +128,28 @@
+ 
+ SYS_FUNC(waitid)
+ {
++	unsigned int idtype = (unsigned int) tcp->u_arg[0];
++	int id = tcp->u_arg[1];
++
+ 	if (entering(tcp)) {
+-		printxval(waitid_types, tcp->u_arg[0], "P_???");
+-		int pid = tcp->u_arg[1];
+-		tprintf(", %d, ", pid);
++		printxval(waitid_types, idtype, "P_???");
++		tprints(", ");
++		switch (idtype)
++		{
++		case P_PID:
++			printpid(tcp, id, PT_TGID);
++			break;
++		case P_PIDFD:
++			printfd(tcp, id);
++			break;
++		case P_PGID:
++			printpid(tcp, id, PT_PGID);
++			break;
++		default:
++			tprintf("%d", id);
++			break;
++		}
++		tprints(", ");
+ 	} else {
+ 		/* siginfo */
+ 		printsiginfo_at(tcp, tcp->u_arg[2]);
+Index: strace-5.7/tests-m32/kcmp.c
+===================================================================
+--- strace-5.7.orig/tests-m32/kcmp.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/tests-m32/kcmp.c	2020-09-09 18:49:06.780401433 +0200
+@@ -64,7 +64,26 @@
+ static void
+ printpidfd(const char *prefix, pid_t pid, unsigned fd)
+ {
+-	printf("%s%d", prefix, fd);
++	const char *path = NULL;
++
++# if VERBOSE_FD
++	if (pid == getpid()) {
++		switch (fd)
++		{
++		case NULL_FD:
++			path = null_path;
++			break;
++		case ZERO_FD:
++			path = zero_path;
++			break;
++		}
++	}
++# endif
++
++	if (path)
++		printf("%s%d<%s>", prefix, fd, path);
++	else
++		printf("%s%d", prefix, fd);
+ }
+ 
+ /*
+@@ -179,7 +198,7 @@
+ 	/* KCMP_FILE is the only type which has additional args */
+ 	do_kcmp(3141592653U, 2718281828U, ARG_STR(KCMP_FILE), bogus_idx1,
+ 		bogus_idx2);
+-	do_kcmp(-1, -1, ARG_STR(KCMP_FILE), NULL_FD, ZERO_FD);
++	do_kcmp(getpid(), getpid(), ARG_STR(KCMP_FILE), NULL_FD, ZERO_FD);
+ 
+ 	/* Types without additional args */
+ 	do_kcmp(-1, -1, ARG_STR(KCMP_VM), bogus_idx1, bogus_idx2);
+@@ -198,7 +217,7 @@
+ 	for (i = 0; i < ARRAY_SIZE(slot_data); i++) {
+ 		memcpy(slot, slot_data + i, sizeof(*slot));
+ 
+-		do_kcmp(getpid(), getppid(), ARG_STR(KCMP_EPOLL_TFD), NULL_FD,
++		do_kcmp(getpid(), -1, ARG_STR(KCMP_EPOLL_TFD), NULL_FD,
+ 			(uintptr_t) slot, 1);
+ 	}
+ 
+Index: strace-5.7/tests-mx32/kcmp.c
+===================================================================
+--- strace-5.7.orig/tests-mx32/kcmp.c	2020-09-09 15:52:09.159983257 +0200
++++ strace-5.7/tests-mx32/kcmp.c	2020-09-09 18:49:06.780401433 +0200
+@@ -64,7 +64,26 @@
+ static void
+ printpidfd(const char *prefix, pid_t pid, unsigned fd)
+ {
+-	printf("%s%d", prefix, fd);
++	const char *path = NULL;
++
++# if VERBOSE_FD
++	if (pid == getpid()) {
++		switch (fd)
++		{
++		case NULL_FD:
++			path = null_path;
++			break;
++		case ZERO_FD:
++			path = zero_path;
++			break;
++		}
++	}
++# endif
++
++	if (path)
++		printf("%s%d<%s>", prefix, fd, path);
++	else
++		printf("%s%d", prefix, fd);
+ }
+ 
+ /*
+@@ -179,7 +198,7 @@
+ 	/* KCMP_FILE is the only type which has additional args */
+ 	do_kcmp(3141592653U, 2718281828U, ARG_STR(KCMP_FILE), bogus_idx1,
+ 		bogus_idx2);
+-	do_kcmp(-1, -1, ARG_STR(KCMP_FILE), NULL_FD, ZERO_FD);
++	do_kcmp(getpid(), getpid(), ARG_STR(KCMP_FILE), NULL_FD, ZERO_FD);
+ 
+ 	/* Types without additional args */
+ 	do_kcmp(-1, -1, ARG_STR(KCMP_VM), bogus_idx1, bogus_idx2);
+@@ -198,7 +217,7 @@
+ 	for (i = 0; i < ARRAY_SIZE(slot_data); i++) {
+ 		memcpy(slot, slot_data + i, sizeof(*slot));
+ 
+-		do_kcmp(getpid(), getppid(), ARG_STR(KCMP_EPOLL_TFD), NULL_FD,
++		do_kcmp(getpid(), -1, ARG_STR(KCMP_EPOLL_TFD), NULL_FD,
+ 			(uintptr_t) slot, 1);
+ 	}
+ 
+Index: strace-5.7/Makefile.in
+===================================================================
+--- strace-5.7.orig/Makefile.in	2020-09-09 15:54:59.569105143 +0200
++++ strace-5.7/Makefile.in	2020-09-09 19:06:15.159014394 +0200
+@@ -322,13 +322,13 @@
+ 	flock.c flock.h fs_x_ioctl.c fsconfig.c fsmount.c fsopen.c \
+ 	fspick.c fstatfs.c fstatfs64.c futex.c gcc_compat.h \
+ 	get_personality.c get_personality.h get_robust_list.c getcpu.c \
+-	getcwd.c getpagesize.c getrandom.c hdio.c hostname.c inotify.c \
+-	inotify_ioctl.c io.c io_uring.c ioctl.c ioperm.c iopl.c \
+-	ioprio.c ipc.c ipc_defs.h ipc_msg.c ipc_msgctl.c ipc_sem.c \
+-	ipc_shm.c ipc_shmctl.c kcmp.c kernel_dirent.h kernel_rusage.h \
+-	kernel_timespec.h kernel_timeval.h kernel_timex.h \
+-	kernel_types.h kernel_v4l2_types.h kexec.c keyctl.c \
+-	keyctl_kdf_params.h kill_save_errno.h kvm.c \
++	getcwd.c getpagesize.c getpid.c getrandom.c hdio.c hostname.c \
++	inotify.c inotify_ioctl.c io.c io_uring.c ioctl.c ioperm.c \
++	iopl.c ioprio.c ipc.c ipc_defs.h ipc_msg.c ipc_msgctl.c \
++	ipc_sem.c ipc_shm.c ipc_shmctl.c kcmp.c kernel_dirent.h \
++	kernel_rusage.h kernel_timespec.h kernel_timeval.h \
++	kernel_timex.h kernel_types.h kernel_v4l2_types.h kexec.c \
++	keyctl.c keyctl_kdf_params.h kill_save_errno.h kvm.c \
+ 	largefile_wrappers.h ldt.c link.c linux/asm_stat.h \
+ 	linux/x32/asm_stat.h linux/x86_64/asm_stat.h list.h listen.c \
+ 	lookup_dcookie.c loop.c lseek.c macros.h mem.c membarrier.c \
+@@ -443,7 +443,7 @@
+ 	libstrace_a-get_personality.$(OBJEXT) \
+ 	libstrace_a-get_robust_list.$(OBJEXT) \
+ 	libstrace_a-getcpu.$(OBJEXT) libstrace_a-getcwd.$(OBJEXT) \
+-	libstrace_a-getpagesize.$(OBJEXT) \
++	libstrace_a-getpagesize.$(OBJEXT) libstrace_a-getpid.$(OBJEXT) \
+ 	libstrace_a-getrandom.$(OBJEXT) libstrace_a-hdio.$(OBJEXT) \
+ 	libstrace_a-hostname.$(OBJEXT) libstrace_a-inotify.$(OBJEXT) \
+ 	libstrace_a-inotify_ioctl.$(OBJEXT) libstrace_a-io.$(OBJEXT) \
+@@ -769,6 +769,7 @@
+ 	./$(DEPDIR)/libstrace_a-getcpu.Po \
+ 	./$(DEPDIR)/libstrace_a-getcwd.Po \
+ 	./$(DEPDIR)/libstrace_a-getpagesize.Po \
++	./$(DEPDIR)/libstrace_a-getpid.Po \
+ 	./$(DEPDIR)/libstrace_a-getrandom.Po \
+ 	./$(DEPDIR)/libstrace_a-hdio.Po \
+ 	./$(DEPDIR)/libstrace_a-hostname.Po \
+@@ -1810,13 +1811,13 @@
+ 	flock.c flock.h fs_x_ioctl.c fsconfig.c fsmount.c fsopen.c \
+ 	fspick.c fstatfs.c fstatfs64.c futex.c gcc_compat.h \
+ 	get_personality.c get_personality.h get_robust_list.c getcpu.c \
+-	getcwd.c getpagesize.c getrandom.c hdio.c hostname.c inotify.c \
+-	inotify_ioctl.c io.c io_uring.c ioctl.c ioperm.c iopl.c \
+-	ioprio.c ipc.c ipc_defs.h ipc_msg.c ipc_msgctl.c ipc_sem.c \
+-	ipc_shm.c ipc_shmctl.c kcmp.c kernel_dirent.h kernel_rusage.h \
+-	kernel_timespec.h kernel_timeval.h kernel_timex.h \
+-	kernel_types.h kernel_v4l2_types.h kexec.c keyctl.c \
+-	keyctl_kdf_params.h kill_save_errno.h kvm.c \
++	getcwd.c getpagesize.c getpid.c getrandom.c hdio.c hostname.c \
++	inotify.c inotify_ioctl.c io.c io_uring.c ioctl.c ioperm.c \
++	iopl.c ioprio.c ipc.c ipc_defs.h ipc_msg.c ipc_msgctl.c \
++	ipc_sem.c ipc_shm.c ipc_shmctl.c kcmp.c kernel_dirent.h \
++	kernel_rusage.h kernel_timespec.h kernel_timeval.h \
++	kernel_timex.h kernel_types.h kernel_v4l2_types.h kexec.c \
++	keyctl.c keyctl_kdf_params.h kill_save_errno.h kvm.c \
+ 	largefile_wrappers.h ldt.c link.c linux/asm_stat.h \
+ 	linux/x32/asm_stat.h linux/x86_64/asm_stat.h list.h listen.c \
+ 	lookup_dcookie.c loop.c lseek.c macros.h mem.c membarrier.c \
+@@ -2835,6 +2836,7 @@
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-getcpu.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-getcwd.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-getpagesize.Po@am__quote@ # am--include-marker
++@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-getpid.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-getrandom.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-hdio.Po@am__quote@ # am--include-marker
+ @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/libstrace_a-hostname.Po@am__quote@ # am--include-marker
+@@ -5082,6 +5084,20 @@
+ @AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
+ @am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -c -o libstrace_a-getpagesize.obj `if test -f 'getpagesize.c'; then $(CYGPATH_W) 'getpagesize.c'; else $(CYGPATH_W) '$(srcdir)/getpagesize.c'; fi`
+ 
++libstrace_a-getpid.o: getpid.c
++@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -MT libstrace_a-getpid.o -MD -MP -MF $(DEPDIR)/libstrace_a-getpid.Tpo -c -o libstrace_a-getpid.o `test -f 'getpid.c' || echo '$(srcdir)/'`getpid.c
++@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libstrace_a-getpid.Tpo $(DEPDIR)/libstrace_a-getpid.Po
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='getpid.c' object='libstrace_a-getpid.o' libtool=no @AMDEPBACKSLASH@
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
++@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -c -o libstrace_a-getpid.o `test -f 'getpid.c' || echo '$(srcdir)/'`getpid.c
++
++libstrace_a-getpid.obj: getpid.c
++@am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -MT libstrace_a-getpid.obj -MD -MP -MF $(DEPDIR)/libstrace_a-getpid.Tpo -c -o libstrace_a-getpid.obj `if test -f 'getpid.c'; then $(CYGPATH_W) 'getpid.c'; else $(CYGPATH_W) '$(srcdir)/getpid.c'; fi`
++@am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libstrace_a-getpid.Tpo $(DEPDIR)/libstrace_a-getpid.Po
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	$(AM_V_CC)source='getpid.c' object='libstrace_a-getpid.obj' libtool=no @AMDEPBACKSLASH@
++@AMDEP_TRUE@@am__fastdepCC_FALSE@	DEPDIR=$(DEPDIR) $(CCDEPMODE) $(depcomp) @AMDEPBACKSLASH@
++@am__fastdepCC_FALSE@	$(AM_V_CC@am__nodep@)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -c -o libstrace_a-getpid.obj `if test -f 'getpid.c'; then $(CYGPATH_W) 'getpid.c'; else $(CYGPATH_W) '$(srcdir)/getpid.c'; fi`
++
+ libstrace_a-getrandom.o: getrandom.c
+ @am__fastdepCC_TRUE@	$(AM_V_CC)$(CC) $(DEFS) $(DEFAULT_INCLUDES) $(INCLUDES) $(libstrace_a_CPPFLAGS) $(CPPFLAGS) $(libstrace_a_CFLAGS) $(CFLAGS) -MT libstrace_a-getrandom.o -MD -MP -MF $(DEPDIR)/libstrace_a-getrandom.Tpo -c -o libstrace_a-getrandom.o `test -f 'getrandom.c' || echo '$(srcdir)/'`getrandom.c
+ @am__fastdepCC_TRUE@	$(AM_V_at)$(am__mv) $(DEPDIR)/libstrace_a-getrandom.Tpo $(DEPDIR)/libstrace_a-getrandom.Po
+@@ -8377,6 +8393,7 @@
+ 	-rm -f ./$(DEPDIR)/libstrace_a-getcpu.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-getcwd.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-getpagesize.Po
++	-rm -f ./$(DEPDIR)/libstrace_a-getpid.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-getrandom.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-hdio.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-hostname.Po
+@@ -8764,6 +8781,7 @@
+ 	-rm -f ./$(DEPDIR)/libstrace_a-getcpu.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-getcwd.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-getpagesize.Po
++	-rm -f ./$(DEPDIR)/libstrace_a-getpid.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-getrandom.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-hdio.Po
+ 	-rm -f ./$(DEPDIR)/libstrace_a-hostname.Po
